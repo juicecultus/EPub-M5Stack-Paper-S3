@@ -6,7 +6,7 @@
 // Touch Screen calibration algorithm from: https://www.embedded.com/how-to-calibrate-touch-screens
 //
 
-#if INKPLATE_6PLUS || TOUCH_TRIAL
+#if (INKPLATE_6PLUS || TOUCH_TRIAL) && !defined(BOARD_TYPE_PAPER_S3)
 
 #define __EVENT_MGR__ 1
 #include "controllers/event_mgr.hpp"
@@ -32,13 +32,14 @@ const char * EventMgr::event_str[8] = { "NONE",        "TAP",           "HOLD", 
 
   #include "wire.hpp"
   #include "inkplate_platform.hpp"
+  #include "esp.hpp"
   #include "viewers/msg_viewer.hpp"
 
   #include "touch_screen.hpp"
   #include "logging.hpp"
 
-  static xQueueHandle touchscreen_isr_queue   = NULL;
-  static xQueueHandle touchscreen_event_queue = NULL;
+  static QueueHandle_t touchscreen_isr_queue   = nullptr;
+  static QueueHandle_t touchscreen_event_queue = nullptr;
 
   static void IRAM_ATTR 
   touchscreen_isr_handler(void * arg)

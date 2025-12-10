@@ -56,6 +56,11 @@ CommonActions::power_it_off()
     #endif
   #endif
 
+  #if defined(BOARD_TYPE_PAPER_S3)
+    #undef INT_PIN
+    #define INT_PIN ((gpio_num_t)0)
+  #endif
+
   app_controller.going_to_deep_sleep();
   #if EPUB_INKPLATE_BUILD
     screen.force_full_update();

@@ -62,7 +62,12 @@ class MatrixBooksDirViewer : public BooksDirViewer
       int16_t line_idx = (y - first_entry_ypos) / (BooksDir::max_cover_height + vert_space_between_entries);
       int16_t column_idx = (x - 5) / (BooksDir::max_cover_width + horiz_space_between_entries);
       if ((line_idx >= line_count) || (column_idx >= column_count)) return -1;
-      return (current_page_nbr * books_per_page) + (column_idx * line_count) + line_idx;
+      #if defined(BOARD_TYPE_PAPER_S3)
+        int16_t index_in_page = line_idx * column_count + column_idx;
+      #else
+        int16_t index_in_page = column_idx * line_count + line_idx;
+      #endif
+      return (current_page_nbr * books_per_page) + index_in_page;
     }
 };
 

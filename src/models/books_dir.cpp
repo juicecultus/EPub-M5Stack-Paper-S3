@@ -494,7 +494,10 @@ BooksDir::refresh(char * book_filename, int16_t & book_index, bool force_init)
     while ((de = readdir(dp))) {
 
       int16_t size = strlen(de->d_name);
-      if ((size > 5) && (strcasecmp(&de->d_name[size - 5], ".epub") == 0)) {
+      // Skip macOS resource fork / metadata files such as "._Name.epub"
+      // which are not real EPUBs and will cause unzip/open errors.
+      if ((size > 5) && (de->d_name[0] != '.' || de->d_name[1] != '_') &&
+          (strcasecmp(&de->d_name[size - 5], ".epub") == 0)) {
 
         std::string fname = de->d_name;
 

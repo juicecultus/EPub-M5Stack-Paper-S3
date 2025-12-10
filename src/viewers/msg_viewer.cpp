@@ -362,6 +362,11 @@ MsgViewer::out_of_memory(const char * raison)
     #endif
     #define LEVEL 1
   #endif
+
+  #if defined(BOARD_TYPE_PAPER_S3)
+    #undef INT_PIN
+    #define INT_PIN ((gpio_num_t)0)
+  #endif
   
   show(ALERT, true, true, "OUT OF MEMORY!!",
     "It's a bit sad that the device is now out of "

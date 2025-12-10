@@ -5,7 +5,8 @@
 #define __BATTERY_VIEWER__ 1
 #include "viewers/battery_viewer.hpp"
 
-#if EPUB_INKPLATE_BUILD
+// Battery viewer relies on Inkplate's battery driver; skip for Paper S3.
+#if EPUB_INKPLATE_BUILD && !BOARD_TYPE_PAPER_S3
   #include "viewers/page.hpp"
   #include "models/config.hpp"
   #include "battery.hpp"

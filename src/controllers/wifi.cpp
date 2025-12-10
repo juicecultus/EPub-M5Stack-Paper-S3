@@ -14,8 +14,11 @@
 #include "lwip/err.h"
 #include "lwip/sys.h"
 
-static EventGroupHandle_t wifi_event_group = nullptr;
-static bool               wifi_first_start =    true;
+static EventGroupHandle_t wifi_event_group       = nullptr;
+static bool               wifi_first_start       =    true;
+static bool               netif_inited           =   false;
+static bool               event_loop_created     =   false;
+static bool               wifi_sta_netif_created =   false;
 
 // ----- wifi_sta_event_handler() -----
 
@@ -35,8 +38,7 @@ wifi_sta_event_handler(void        * arg,
                   int32_t            event_id, 
                   void             * event_data)
 {
-  static constexpr char const * TAG = "WiFi Event Hanfler";
-  LOG_I("STA Event, Base: %08x, Event: %d.", (unsigned int) event_base, event_id);
+  LOG_I("WiFi Event Handler: Base: %08x, Event: %d.", (unsigned int) event_base, event_id);
 
   static int s_retry_num = 0;
 
@@ -87,10 +89,24 @@ WIFI::start(void)
 
   if (wifi_event_group == nullptr) wifi_event_group = xEventGroupCreate();
 
-  ESP_ERROR_CHECK(esp_netif_init());
+  // Initialize network interface and default event loop only once for the
+  // entire application lifetime. Repeated initialization will return
+  // ESP_ERR_INVALID_STATE, so guard these calls explicitly.
 
-  ESP_ERROR_CHECK(esp_event_loop_create_default());
-  esp_netif_create_default_wifi_sta();
+  if (!netif_inited) {
+    ESP_ERROR_CHECK(esp_netif_init());
+    netif_inited = true;
+  }
+
+  if (!event_loop_created) {
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    event_loop_created = true;
+  }
+
+  if (!wifi_sta_netif_created) {
+    esp_netif_create_default_wifi_sta();
+    wifi_sta_netif_created = true;
+  }
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -153,10 +169,6 @@ WIFI::start(void)
     LOG_E("UNEXPECTED EVENT");
   }
 
-  if (!connected) {
-    ESP_ERROR_CHECK(esp_event_loop_delete_default());
-  }
-
   running = true;
   return connected;
 }
@@ -165,13 +177,14 @@ void
 WIFI::stop()
 {
   if (running) {
-    ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT,   ESP_EVENT_ANY_ID,     &wifi_sta_event_handler));
-    ESP_ERROR_CHECK(esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_START, &wifi_sta_event_handler));
+    // Unregister the same handlers we registered in start():
+    //   WIFI_EVENT, ESP_EVENT_ANY_ID
+    //   IP_EVENT,   IP_EVENT_STA_GOT_IP
+    ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT,   IP_EVENT_STA_GOT_IP, &wifi_sta_event_handler));
+    ESP_ERROR_CHECK(esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,    &wifi_sta_event_handler));
 
     vEventGroupDelete(wifi_event_group);
     wifi_event_group = nullptr;
-
-    esp_event_loop_delete_default();
 
     esp_wifi_disconnect();
     esp_wifi_stop();

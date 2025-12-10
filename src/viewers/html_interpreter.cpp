@@ -7,6 +7,9 @@
 #include "models/epub.hpp"
 #include "models/config.hpp"
 #include "models/toc.hpp"
+#if EPUB_INKPLATE_BUILD
+  #include "esp.hpp"
+#endif
 
 MemoryPool<Page::Format> HTMLInterpreter::fmt_pool;
 

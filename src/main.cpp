@@ -24,6 +24,7 @@
   #include "pugixml.hpp"
   #include "alloc.hpp"
   #include "esp.hpp"
+  #include "esp_task_wdt.h"
 
   #if INKPLATE_6PLUS
     #include "controllers/back_lit.hpp"
@@ -67,13 +68,20 @@
       if (inkplate_err) LOG_E("InkPlate6Ctrl Error.");
 
       bool config_err = !config.read();
-      if (config_err) LOG_E("Config Error.");
+
       #if DATE_TIME_RTC
+        if (config_err) {
+          LOG_E("Config Error.");
+        }
         else {
           std::string time_zone;
 
           config.get(Config::Ident::TIME_ZONE, time_zone);
           setenv("TZ", time_zone.c_str(), 1);
+        }
+      #else
+        if (config_err) {
+          LOG_E("Config Error.");
         }
       #endif
       
@@ -99,16 +107,43 @@
         #define LEVEL 1
       #endif
 
+      #if defined(BOARD_TYPE_PAPER_S3)
+        #undef INT_PIN
+        #define INT_PIN ((gpio_num_t)0)
+      #endif
+
       if (fonts.setup()) {
         
         Screen::Orientation    orientation;
         Screen::PixelResolution resolution;
         config.get(Config::Ident::ORIENTATION,      (int8_t *) &orientation);
-        config.get(Config::Ident::PIXEL_RESOLUTION, (int8_t *) &resolution);
+
+        #if defined(BOARD_TYPE_PAPER_S3)
+          // Paper S3 always renders in 4-bit grayscale via epdiy. Do not
+          // depend on the stored PIXEL_RESOLUTION setting here.
+          resolution = Screen::PixelResolution::THREE_BITS;
+        #else
+          config.get(Config::Ident::PIXEL_RESOLUTION, (int8_t *) &resolution);
+        #endif
+
         screen.setup(resolution, orientation);
 
         event_mgr.setup();
         event_mgr.set_orientation(orientation);
+
+        #if defined(BOARD_TYPE_PAPER_S3)
+          // The epdiy rendering threads ("epd_prep") can fully occupy both
+          // CPU cores during long grayscale updates (GC16/GL16/fullclear).
+          // The ESP-IDF task watchdog by default monitors the IDLE tasks on
+          // each core, so IDLE0/IDLE1 will not run and cannot feed the
+          // watchdog while epd_prep is active, causing repeated task_wdt
+          // warnings and potential resets even though the system is behaving
+          // as expected.
+          //
+          // For this dedicated reader, we rely on the interrupt watchdog for
+          // hard lockup protection and avoid using the Task WDT while epdiy
+          // keeps the CPUs busy during display updates.
+        #endif
 
         #if INKPLATE_6PLUS
           back_lit.setup();
@@ -172,23 +207,35 @@
     {
       //printf("EPub InkPlate Reader Startup\n");
 
-      /* Print chip information */
-      esp_chip_info_t chip_info;
-      esp_chip_info(&chip_info);
-      printf("This is %s chip with %d CPU core(s), WiFi%s%s, ",
-              CONFIG_IDF_TARGET,
-              chip_info.cores,
-              (chip_info.features & CHIP_FEATURE_BT) ? "/BT" : "",
-              (chip_info.features & CHIP_FEATURE_BLE) ? "/BLE" : "");
+      #if !defined(BOARD_TYPE_PAPER_S3)
+        /* Print chip information */
+        esp_chip_info_t chip_info;
+        esp_chip_info(&chip_info);
+        printf("This is %s chip with %d CPU core(s), WiFi%s%s, ",
+                CONFIG_IDF_TARGET,
+                chip_info.cores,
+                (chip_info.features & CHIP_FEATURE_BT) ? "/BT" : "",
+                (chip_info.features & CHIP_FEATURE_BLE) ? "/BLE" : "");
 
-      printf("silicon revision %d, ", chip_info.revision);
+        printf("silicon revision %d, ", chip_info.revision);
 
-      printf("%dMB %s flash\n", spi_flash_get_chip_size() / (1024 * 1024),
-              (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
+        printf("%dMB %s flash\n", spi_flash_get_chip_size() / (1024 * 1024),
+                (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
 
-      printf("Minimum free heap size: %d bytes\n", esp_get_minimum_free_heap_size());
+        printf("Minimum free heap size: %d bytes\n", esp_get_minimum_free_heap_size());
 
-      heap_caps_print_heap_info(MALLOC_CAP_32BIT|MALLOC_CAP_8BIT|MALLOC_CAP_SPIRAM|MALLOC_CAP_INTERNAL);
+        heap_caps_print_heap_info(MALLOC_CAP_32BIT|MALLOC_CAP_8BIT|MALLOC_CAP_SPIRAM|MALLOC_CAP_INTERNAL);
+      #endif
+
+      #if defined(BOARD_TYPE_PAPER_S3) && CONFIG_ESP_TASK_WDT_INIT
+        // Disable the Task Watchdog Timer service on Paper S3. The epdiy
+        // rendering threads can legitimately keep both cores busy for long
+        // periods during grayscale updates, which conflicts with TWDT's
+        // expectation that monitored tasks (especially idle tasks) run
+        // frequently. We keep the interrupt watchdog enabled for hard
+        // lockup detection and turn off TWDT to avoid spurious errors.
+        esp_task_wdt_deinit();
+      #endif
 
       TaskHandle_t xHandle = NULL;
 

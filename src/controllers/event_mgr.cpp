@@ -22,6 +22,7 @@
   #include "wire.hpp"
   #include "inkplate_platform.hpp"
   #include "viewers/msg_viewer.hpp"
+  #include "esp.hpp"
 
   #if EXTENDED_CASE
     #include "press_keys.hpp"
@@ -29,8 +30,8 @@
     #include "touch_keys.hpp"
   #endif
 
-  static xQueueHandle touchpad_isr_queue   = NULL;
-  static xQueueHandle touchpad_event_queue = NULL;
+  static QueueHandle_t touchpad_isr_queue   = nullptr;
+  static QueueHandle_t touchpad_event_queue = nullptr;
 
   static void IRAM_ATTR 
   touchpad_isr_handler(void * arg)
@@ -229,7 +230,7 @@
       event.kind = EventKind::NONE;
     }
     return event;
-}
+  }
 
 #else
 

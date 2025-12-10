@@ -54,7 +54,11 @@ static int8_t old_dir_view;
   static int8_t show_heap;
 #endif
 
-#if INKPLATE_6PLUS || TOUCH_TRIAL
+#if defined(BOARD_TYPE_PAPER_S3)
+  // On Paper S3 the display is always driven in 4-bit grayscale via epdiy,
+  // so the Pixel Resolution setting is not exposed in the UI.
+  static constexpr int8_t MAIN_FORM_SIZE = 7;
+#elif INKPLATE_6PLUS || TOUCH_TRIAL
   static constexpr int8_t MAIN_FORM_SIZE = 8;
 #else
   static constexpr int8_t MAIN_FORM_SIZE = 7;
@@ -68,7 +72,9 @@ static FormEntry main_params_form_entries[MAIN_FORM_SIZE] = {
   #else
     { .caption = "Buttons Position (*):",    .u = { .ch = { .value = (int8_t *) &orientation, .choice_count = 3, .choices = FormChoiceField::orientation_choices    } }, .entry_type = FormEntryType::VERTICAL    },
   #endif
-  { .caption = "Pixel Resolution :",         .u = { .ch = { .value = (int8_t *) &resolution,  .choice_count = 2, .choices = FormChoiceField::resolution_choices     } }, .entry_type = FormEntryType::HORIZONTAL  },
+  #if !defined(BOARD_TYPE_PAPER_S3)
+    { .caption = "Pixel Resolution :",         .u = { .ch = { .value = (int8_t *) &resolution,  .choice_count = 2, .choices = FormChoiceField::resolution_choices     } }, .entry_type = FormEntryType::HORIZONTAL  },
+  #endif
   { .caption = "Show Battery Level :",       .u = { .ch = { .value = &show_battery,           .choice_count = 4, .choices = FormChoiceField::battery_visual_choices } }, .entry_type = FormEntryType::VERTICAL    },
   { .caption = "Show Title (*):",            .u = { .ch = { .value = &show_title,             .choice_count = 2, .choices = FormChoiceField::yes_no_choices         } }, .entry_type = FormEntryType::HORIZONTAL  },
   #if DATE_TIME_RTC
@@ -125,7 +131,9 @@ main_parameters()
 {
   config.get(Config::Ident::ORIENTATION,      (int8_t *) &orientation);
   config.get(Config::Ident::DIR_VIEW,         &dir_view              );
-  config.get(Config::Ident::PIXEL_RESOLUTION, (int8_t *) &resolution );
+  #if !defined(BOARD_TYPE_PAPER_S3)
+    config.get(Config::Ident::PIXEL_RESOLUTION, (int8_t *) &resolution );
+  #endif
   config.get(Config::Ident::BATTERY,          &show_battery          );
   config.get(Config::Ident::SHOW_TITLE,       &show_title            );
   config.get(Config::Ident::TIMEOUT,          &timeout               );
@@ -142,7 +150,9 @@ main_parameters()
 
   old_orientation = orientation;
   old_dir_view    = dir_view;
-  old_resolution  = resolution;
+  #if !defined(BOARD_TYPE_PAPER_S3)
+    old_resolution  = resolution;
+  #endif
   old_show_title  = show_title;
   done            = 1;
 
@@ -412,7 +422,9 @@ OptionController::input_event(const EventMgr::Event & event)
       // if (ok) {
         config.put(Config::Ident::ORIENTATION,      (int8_t) orientation);
         config.put(Config::Ident::DIR_VIEW,         dir_view            );
-        config.put(Config::Ident::PIXEL_RESOLUTION, (int8_t) resolution );
+        #if !defined(BOARD_TYPE_PAPER_S3)
+          config.put(Config::Ident::PIXEL_RESOLUTION, (int8_t) resolution );
+        #endif
         config.put(Config::Ident::BATTERY,          show_battery        );
         config.put(Config::Ident::SHOW_TITLE,       show_title          );
         config.put(Config::Ident::TIMEOUT,          timeout             );
@@ -435,19 +447,25 @@ OptionController::input_event(const EventMgr::Event & event)
         if (old_dir_view != dir_view) {
           books_dir_controller.set_current_book_index(-1);
         }
-
-        if (old_resolution != resolution) {
-          fonts.clear_glyph_caches();
-          screen.set_pixel_resolution(resolution);
-        }
+        
+        #if !defined(BOARD_TYPE_PAPER_S3)
+          if (old_resolution != resolution) {
+            fonts.clear_glyph_caches();
+            screen.set_pixel_resolution(resolution);
+          }
+        #endif
 
         if ((old_orientation != orientation) ||
             (old_show_title  != show_title )) {
           epub.update_book_format_params();
         }
 
-        if ((old_orientation != orientation) || 
-            (old_resolution  != resolution )) {
+        #if !defined(BOARD_TYPE_PAPER_S3)
+          if ((old_orientation != orientation) || 
+              (old_resolution  != resolution )) {
+        #else
+          if (old_orientation != orientation) {
+        #endif
           menu_viewer.show(menu, 2, true);
         }
         else {

@@ -5,7 +5,8 @@
 #pragma once
 #include "global.hpp"
 
-#if EPUB_INKPLATE_BUILD
+// Battery viewer is only available on Inkplate boards, not on Paper S3.
+#if EPUB_INKPLATE_BUILD && !BOARD_TYPE_PAPER_S3
   namespace BatteryViewer {
 
     #if __BATTERY_VIEWER__

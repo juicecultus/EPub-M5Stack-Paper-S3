@@ -13,9 +13,11 @@
 #include "viewers/book_viewer.hpp"
 #include "viewers/linear_books_dir_viewer.hpp"
 #include "viewers/matrix_books_dir_viewer.hpp"
+#include "screen.hpp"
 
 #if EPUB_INKPLATE_BUILD
   #include "models/nvs_mgr.hpp"
+  #include "esp.hpp"
 #endif
 
 void
@@ -195,6 +197,11 @@ BooksDirController::enter()
 
   LOG_D("===> enter()...");
   config.get(Config::Ident::DIR_VIEW, &viewer_id);
+  const char *view = (viewer_id == LINEAR_VIEWER) ? "linear" :
+                     (viewer_id == MATRIX_VIEWER) ? "matrix" : "unknown";
+  log('I', TAG,
+      "BooksDirController enter: viewer=%s (id=%d) screen=%dx%d",
+      view, viewer_id, Screen::get_width(), Screen::get_height());
   books_dir_viewer = (viewer_id == LINEAR_VIEWER) ? (BooksDirViewer *) &linear_books_dir_viewer : 
                                         (BooksDirViewer *) &matrix_books_dir_viewer;
 

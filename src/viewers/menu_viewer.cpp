@@ -11,6 +11,9 @@
 #include "viewers/screen_bottom.hpp"
 #include "screen.hpp"
 #include "controllers/app_controller.hpp"
+#if EPUB_INKPLATE_BUILD
+  #include "esp.hpp"
+#endif
 
 static const std::string TOUCH_AND_HOLD_STR = "Touch and hold icon for info. Tap for action.";
 

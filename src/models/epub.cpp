@@ -17,6 +17,7 @@
 #include "logging.hpp"
 #if EPUB_INKPLATE_BUILD
   #include "esp_heap_caps.h"
+  #include "esp.hpp"
 #endif
 
 #include <iostream>
@@ -93,9 +94,13 @@ xml_node one_by_attr(xml_node n, const char * name1, const char * name2, const c
     if ((res = n.find_child_by_attribute(name2, attr, value))) {
       LOG_D("one by attr: %s Found", name2);
     }
-    else LOG_D("one by attr: %s NOT Found", name2);
+    else {
+      LOG_D("one by attr: %s NOT Found", name2);
+    }
   }
-  else LOG_D("one by attr: %s Found", name1);
+  else {
+    LOG_D("one by attr: %s Found", name1);
+  }
 
   return res;
 }

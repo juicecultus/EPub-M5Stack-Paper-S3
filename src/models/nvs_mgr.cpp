@@ -61,21 +61,26 @@ NVSMgr::setup(bool force_erase)
     }
     
     if (initialized) {
-      nvs_iterator_t it = nvs_entry_find(PARTITION_NAME, NAMESPACE, NVS_TYPE_ANY);
-      while (it != NULL) {
-        nvs_entry_info_t info;
-        nvs_entry_info(it, &info);
-        if (strncmp(info.key, "ID_", 3) == 0) {
-          uint32_t index = atoi(&info.key[3]);
-          uint32_t id;
-          if (nvs_get_u32(nvs_handle, info.key, &id) == ESP_OK) {
-            track_list[index] = id;
-            track_count++;
+      nvs_iterator_t it = nullptr;
+      if (nvs_entry_find(PARTITION_NAME, NAMESPACE, NVS_TYPE_ANY, &it) == ESP_OK) {
+        while (it != nullptr) {
+          nvs_entry_info_t info;
+          nvs_entry_info(it, &info);
+          if (strncmp(info.key, "ID_", 3) == 0) {
+            uint32_t index = atoi(&info.key[3]);
+            uint32_t id;
+            if (nvs_get_u32(nvs_handle, info.key, &id) == ESP_OK) {
+              track_list[index] = id;
+              track_count++;
+            }
+          }
+
+          if (nvs_entry_next(&it) != ESP_OK) {
+            break;
           }
         }
-        it = nvs_entry_next(it);
-      };
-      nvs_release_iterator(it);
+        nvs_release_iterator(it);
+      }
     }
     nvs_close(nvs_handle);
   }
@@ -333,16 +338,21 @@ int8_t NVSMgr::get_pos(uint32_t id)
               << "    FreeEntries: " << nvs_stats.free_entries  << std::endl
               << "    AllEntries: "  << nvs_stats.total_entries << std::endl;
 
-    nvs_iterator_t it = nvs_entry_find(PARTITION_NAME, NAMESPACE, NVS_TYPE_ANY);
+    nvs_iterator_t it = nullptr;
     std::cout << "Content:" << std::endl;
-    while (it != NULL) {
-      nvs_entry_info_t info;
-      nvs_entry_info(it, &info);
-      it = nvs_entry_next(it);
-      std::cout << "    key: "  << info.key
-                <<    " type: " << info.type << std::endl;
-    };
-    nvs_release_iterator(it);
+    if (nvs_entry_find(PARTITION_NAME, NAMESPACE, NVS_TYPE_ANY, &it) == ESP_OK) {
+      while (it != nullptr) {
+        nvs_entry_info_t info;
+        nvs_entry_info(it, &info);
+        std::cout << "    key: "  << info.key
+                  <<    " type: " << info.type << std::endl;
+
+        if (nvs_entry_next(&it) != ESP_OK) {
+          break;
+        }
+      }
+      nvs_release_iterator(it);
+    }
 
     std::cout << NAMESPACE << ":" << std::endl;
     if (nvs_open(NAMESPACE, NVS_READONLY, &nvs_handle) == ESP_OK) {

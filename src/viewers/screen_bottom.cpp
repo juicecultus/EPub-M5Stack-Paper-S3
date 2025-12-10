@@ -53,9 +53,6 @@ ScreenBottom::show(int16_t page_nbr, int16_t page_count)
   page.clear_region(Dim(Screen::get_width(), h),
                     Pos(0, Screen::get_height() - h));
 
-  // page.put_highlight(Dim(Screen::get_width(), h ),
-  //                    Pos(0, Screen::get_height() - h));
-
   if ((page_nbr != -1) && (page_count != -1)) {
     ostr << page_nbr + 1 << " / " << page_count;
 
@@ -65,7 +62,9 @@ ScreenBottom::show(int16_t page_nbr, int16_t page_count)
                     fmt);
   }
 
-  #if EPUB_INKPLATE_BUILD
+  // Heap info and battery viewer rely on Inkplate-specific drivers, which
+  // are not available on Paper S3.
+  #if EPUB_INKPLATE_BUILD && !BOARD_TYPE_PAPER_S3
     int8_t show_heap;
     config.get(Config::Ident::SHOW_HEAP, &show_heap);
 
@@ -112,5 +111,4 @@ ScreenBottom::show(int16_t page_nbr, int16_t page_count)
                       fmt);
     }
   #endif
-
 }

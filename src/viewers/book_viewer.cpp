@@ -14,6 +14,7 @@
 
 #if EPUB_INKPLATE_BUILD
   #include "viewers/battery_viewer.hpp"
+  #include "esp.hpp"
 #endif
 
 #include "screen.hpp"
@@ -133,9 +134,9 @@ BookViewer::build_page_at(const PageLocs::PageId & page_id)
 
       page.start(fmt);
 
-      #if EPUB_INKPLATE_BUILD
-        esp_task_wdt_reset();
-      #endif
+    #if EPUB_INKPLATE_BUILD && !defined(BOARD_TYPE_PAPER_S3)
+      esp_task_wdt_reset();
+    #endif
 
       Page::Format * new_fmt = interp->duplicate_fmt(fmt);
 

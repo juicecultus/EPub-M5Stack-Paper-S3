@@ -113,7 +113,9 @@ TOC::load()
     show();
   #endif
 
-  if (ready) LOG_I("Reading toc completed. Entry count: %d.", entries.size());
+  if (ready) {
+    LOG_I("Reading toc completed. Entry count: %d.", entries.size());
+  }
   #if EPUB_INKPLATE_BUILD && (LOG_LOCAL_LEVEL == ESP_LOG_VERBOSE)
     ESP::show_heaps_info();
   #endif

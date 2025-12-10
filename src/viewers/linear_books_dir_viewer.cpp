@@ -230,7 +230,7 @@ LinearBooksDirViewer::highlight(int16_t item_idx)
     page.add_text(book->author, fmt);
     page.end_paragraph(fmt);
 
-    #if EPUB_INKPLATE_BUILD
+    #if EPUB_INKPLATE_BUILD && !BOARD_TYPE_PAPER_S3
       BatteryViewer::show();
     #endif
 

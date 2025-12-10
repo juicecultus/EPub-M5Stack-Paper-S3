@@ -8,6 +8,8 @@
 // some part of the event manager code here...
 
 
+#if !defined(BOARD_TYPE_PAPER_S3)
+
 #define __SCREEN__ 1
 #include "screen.hpp"
 
@@ -484,3 +486,5 @@ Screen::set_orientation(Orientation orient)
     height = e_ink.get_height();
   }
 }
+// Guard legacy Screen implementation for non-Paper S3 builds
+#endif // !BOARD_TYPE_PAPER_S3

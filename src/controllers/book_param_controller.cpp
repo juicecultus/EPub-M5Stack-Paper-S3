@@ -18,7 +18,7 @@
 #include "viewers/form_viewer.hpp"
 #include "viewers/msg_viewer.hpp"
 
-#if EPUB_INKPLATE_BUILD
+#if EPUB_INKPLATE_BUILD && !BOARD_TYPE_PAPER_S3
   #include "esp_system.h"
   #include "eink.hpp"
   #include "esp.hpp"
@@ -44,12 +44,32 @@ static int8_t old_font;
   static constexpr int8_t BOOK_PARAMS_FORM_SIZE = 4;
 #endif
 static FormEntry book_params_form_entries[BOOK_PARAMS_FORM_SIZE] = {
-  { .caption = "Font Size:",           .u = { .ch = { .value = &font_size,          .choice_count = 4, .choices = FormChoiceField::font_size_choices } }, FormEntryType::HORIZONTAL },
-  { .caption = "Use fonts in book:",   .u = { .ch = { .value = &use_fonts_in_book,  .choice_count = 2, .choices = FormChoiceField::yes_no_choices    } }, FormEntryType::HORIZONTAL },
-  { .caption = "Font:",                .u = { .ch = { .value = &font,               .choice_count = 8, .choices = FormChoiceField::font_choices      } }, FormEntryType::VERTICAL   },
-  { .caption = "Show Images in book:", .u = { .ch = { .value = &show_images,        .choice_count = 2, .choices = FormChoiceField::yes_no_choices    } }, FormEntryType::HORIZONTAL },
+  { .caption = "Font Size:",
+    .u = { .ch = { .value = &font_size,
+                   .choice_count = 4,
+                   .choices = FormChoiceField::font_size_choices } },
+    .entry_type = FormEntryType::HORIZONTAL },
+  { .caption = "Use fonts in book:",
+    .u = { .ch = { .value = &use_fonts_in_book,
+                   .choice_count = 2,
+                   .choices = FormChoiceField::yes_no_choices } },
+    .entry_type = FormEntryType::HORIZONTAL },
+  { .caption = "Font:",
+    .u = { .ch = { .value = &font,
+                   .choice_count = 8,
+                   .choices = FormChoiceField::font_choices } },
+    .entry_type = FormEntryType::VERTICAL },
+  { .caption = "Show Images in book:",
+    .u = { .ch = { .value = &show_images,
+                   .choice_count = 2,
+                   .choices = FormChoiceField::yes_no_choices } },
+    .entry_type = FormEntryType::HORIZONTAL },
   #if INKPLATE_6PLUS || TOUCH_TRIAL
-    { .caption = " DONE ",             .u = { .ch = { .value = &done_res,           .choice_count = 0, .choices = nullptr                            } }, FormEntryType::DONE       }
+    { .caption = " DONE ",
+      .u = { .ch = { .value = &done_res,
+                     .choice_count = 0,
+                     .choices = nullptr } },
+      .entry_type = FormEntryType::DONE }
   #endif
 };
 

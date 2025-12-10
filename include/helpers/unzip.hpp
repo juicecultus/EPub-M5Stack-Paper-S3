@@ -12,7 +12,8 @@
 #define ZLIB  0
 
 #if MINIZ
-  #include "miniz.h"
+  // Use the project-local miniz implementation to avoid picking up ESP-IDF's variant.
+  #include "../../lib/externals/miniz.h"
 #else
   #include "zlib.h"
 #endif

@@ -13,11 +13,59 @@
  * 
  * This class implements the low level methods required to paint
  * on the display. Under the InkPlate6, it is using the EInk display driver. 
- * 
- * This is a singleton. It cannot be instanciated elsewhere. It is not 
- * instanciated in the heap. This is reinforced by the C++ construction
- * below. It also cannot be copied through the NonCopyable derivation.
+ * For BOARD_TYPE_PAPER_S3, a minimal stub implementation is provided
+ * that will later be backed by the epdiy renderer.
  */
+
+#if defined(BOARD_TYPE_PAPER_S3)
+
+class Screen : NonCopyable
+{
+  public:
+    static constexpr uint8_t    BLACK_COLOR =   0;
+    static constexpr uint8_t    WHITE_COLOR =   1;
+    static constexpr int8_t     IDENT       =   4;
+    static constexpr uint16_t   RESOLUTION  = 212;  ///< Approximate pixels per inch
+
+    enum class Orientation     : int8_t { LEFT, RIGHT, BOTTOM, TOP };
+    enum class PixelResolution : int8_t { ONE_BIT, THREE_BITS };
+
+    void          draw_bitmap(const unsigned char * bitmap_data, Dim dim, Pos pos);
+    void           draw_glyph(const unsigned char * bitmap_data, Dim dim, Pos pos, uint16_t pitch);
+    void       draw_rectangle(Dim dim, Pos pos, uint8_t color);
+    void draw_round_rectangle(Dim dim, Pos pos, uint8_t color);
+    void      colorize_region(Dim dim, Pos pos, uint8_t color);
+
+    void clear();
+    void update(bool no_full = false);
+
+  private:
+    static constexpr char const * TAG = "Screen";
+    
+    static uint16_t width;
+    static uint16_t height;
+
+    static Screen singleton;
+    Screen() : pixel_resolution(PixelResolution::ONE_BIT),
+               orientation(Orientation::BOTTOM) { };
+
+    PixelResolution   pixel_resolution;
+    Orientation       orientation;
+
+  public:
+    static Screen & get_singleton() noexcept { return singleton; }
+    void setup(PixelResolution resolution, Orientation orientation);
+    void set_pixel_resolution(PixelResolution resolution, bool force = false);
+    void set_orientation(Orientation orient);
+    inline Orientation get_orientation() { return orientation; }
+    inline PixelResolution get_pixel_resolution() { return pixel_resolution; }
+    void force_full_update();
+
+    inline static uint16_t get_width() { return width; }
+    inline static uint16_t get_height() { return height; }
+};
+
+#else  // !BOARD_TYPE_PAPER_S3
 
 class Screen : NonCopyable
 {
@@ -103,70 +151,6 @@ class Screen : NonCopyable
     enum class Corner : uint8_t { TOP_LEFT, TOP_RIGHT, LOWER_LEFT, LOWER_RIGHT };
     void draw_arc(uint16_t x_mid,  uint16_t y_mid,  uint8_t radius, Corner corner, uint8_t color);
 
-    inline void set_pixel_o_left_1bit(uint32_t col, uint32_t row, uint8_t color) {
-      uint8_t * temp = &(frame_buffer_1bit->get_data())[frame_buffer_1bit->get_data_size() - (frame_buffer_1bit->get_line_size() * (col + 1)) + (row >> 3)];
-      if (color == 1)
-        *temp = *temp | LUT1BIT_INV[row & 7];
-      else
-        *temp = (*temp & ~LUT1BIT_INV[row & 7]);
-    }
-
-    inline void set_pixel_o_right_1bit(uint32_t col, uint32_t row, uint8_t color) {
-      uint8_t * temp = &(frame_buffer_1bit->get_data())[(frame_buffer_1bit->get_line_size() * (col + 1)) - (row >> 3) - 1];
-      if (color == 1)
-        *temp = *temp | LUT1BIT[row & 7];
-      else
-        *temp = (*temp & ~LUT1BIT[row & 7]);
-    }
-
-    inline void set_pixel_o_bottom_1bit(uint32_t col, uint32_t row, uint8_t color) {
-      uint8_t * temp = &(frame_buffer_1bit->get_data())[frame_buffer_1bit->get_line_size() * row + (col >> 3)];
-      if (color == 1)
-        *temp = *temp | LUT1BIT_INV[col & 7];
-      else
-        *temp = (*temp & ~LUT1BIT_INV[col & 7]);
-    }
-
-    inline void set_pixel_o_top_1bit(uint32_t col, uint32_t row, uint8_t color) {
-      uint8_t * temp = &(frame_buffer_1bit->get_data())[frame_buffer_1bit->get_data_size() - (frame_buffer_1bit->get_line_size() * row) - (col >> 3)];
-      if (color == 1)
-        *temp = *temp | LUT1BIT[col & 7];
-      else
-        *temp = (*temp & ~LUT1BIT[col & 7]);
-    }
-
-    inline void set_pixel_o_left_3bit(uint32_t col, uint32_t row, uint8_t color) {
-      uint8_t * temp = &(frame_buffer_3bit->get_data())[frame_buffer_3bit->get_data_size() - (frame_buffer_3bit->get_line_size() * (col + 1)) + (row >> 1)];
-      if (row & 1)
-        *temp = (*temp & 0xF0) | color;
-      else
-        *temp = (*temp & 0x0F) | (color << 4);
-    }
-
-    inline void set_pixel_o_right_3bit(uint32_t col, uint32_t row, uint8_t color) {
-      uint8_t * temp = &(frame_buffer_3bit->get_data())[(frame_buffer_3bit->get_line_size() * (col + 1)) - (row >> 1) - 1];
-      if (row & 1)
-        *temp = (*temp & 0x0F) | (color << 4);
-      else
-        *temp = (*temp & 0xF0) | color;
-    }
-
-    inline void set_pixel_o_bottom_3bit(uint32_t col, uint32_t row, uint8_t color) {
-      uint8_t * temp = &(frame_buffer_3bit->get_data())[frame_buffer_3bit->get_line_size() * row + (col >> 1)];
-      if (col & 1)
-        *temp = (*temp & 0xF0) | color;
-      else
-        *temp = (*temp & 0x0F) | (color << 4);
-     }
-
-    inline void set_pixel_o_top_3bit(uint32_t col, uint32_t row, uint8_t color) {
-      uint8_t * temp = &(frame_buffer_3bit->get_data())[frame_buffer_3bit->get_data_size() - (frame_buffer_3bit->get_line_size() * row) - (col >> 1)];
-      if (col & 1)
-        *temp = (*temp & 0x0F) | (color << 4);
-      else
-        *temp = (*temp & 0xF0) | color;
-     }
-
   public:
     static Screen & get_singleton() noexcept { return singleton; }
     void setup(PixelResolution resolution, Orientation orientation);
@@ -183,6 +167,8 @@ class Screen : NonCopyable
     inline static uint16_t get_width() { return width; }
     inline static uint16_t get_height() { return height; }
 };
+
+#endif // BOARD_TYPE_PAPER_S3
 
 #if __SCREEN__
   Screen & screen = Screen::get_singleton();

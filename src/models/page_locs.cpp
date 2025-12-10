@@ -66,9 +66,9 @@ struct RetrieveQueueData {
       return cfg;
   }
 
-  static xQueueHandle mgr_queue      = nullptr;
-  static xQueueHandle state_queue    = nullptr;
-  static xQueueHandle retrieve_queue = nullptr;
+  static QueueHandle_t mgr_queue      = nullptr;
+  static QueueHandle_t state_queue    = nullptr;
+  static QueueHandle_t retrieve_queue = nullptr;
 
   #define QUEUE_SEND(q, m, t)        xQueueSend(q, &m, t)
   #define QUEUE_RECEIVE(q, m, t)  xQueueReceive(q, &m, t)
@@ -640,7 +640,7 @@ PageLocs::build_page_locs(int16_t itemref_index)
 
         page_out.start(fmt);
 
-        #if EPUB_INKPLATE_BUILD
+        #if EPUB_INKPLATE_BUILD && !defined(BOARD_TYPE_PAPER_S3)
           esp_task_wdt_reset();
         #endif
         
