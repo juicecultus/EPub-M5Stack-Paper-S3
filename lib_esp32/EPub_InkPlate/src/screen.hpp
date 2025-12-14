@@ -23,7 +23,7 @@ class Screen : NonCopyable
 {
   public:
     static constexpr uint8_t    BLACK_COLOR =   0;
-    static constexpr uint8_t    WHITE_COLOR =   1;
+    static constexpr uint8_t    WHITE_COLOR =   7;
     static constexpr int8_t     IDENT       =   4;
     static constexpr uint16_t   RESOLUTION  = 212;  ///< Approximate pixels per inch
 

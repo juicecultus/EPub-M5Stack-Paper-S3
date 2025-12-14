@@ -128,11 +128,49 @@ void Screen::set_orientation(Orientation orient)
 
 static inline uint8_t map_gray(uint8_t v)
 {
-  // Assume incoming bitmaps/glyphs are 0 (black) .. 255 (white).
-  // epdiy expects 0 = black, 255 = white as well, but many callers
-  // in EPub_InkPlate use inverted grayscale, so start with a simple
-  // inversion that we can tweak based on visual tests.
-  return 255 - v;
+  // Convert an 8-bit grayscale value (0=black..255=white) into an epdiy
+  // API color byte (upper nibble significant).
+  return (uint8_t)(v & 0xF0);
+}
+
+static inline uint8_t gray8_to_nibble(uint8_t v)
+{
+  // 0 (black) .. 255 (white) => 0..15
+  return (uint8_t)(v >> 4);
+}
+
+static inline uint8_t alpha8_to_nibble(uint8_t a)
+{
+  // Alpha 0 (transparent) .. 255 (opaque) => 15..0 (white..black)
+  return (uint8_t)(15 - (a >> 4));
+}
+
+static inline uint8_t gray3_to_nibble(uint8_t v)
+{
+  // 3-bit grayscale 0..7 => 0..15
+  return (uint8_t)((v * 15 + 3) / 7);
+}
+
+static inline void set_pixel_nibble_physical(uint16_t x, uint16_t y, uint8_t nibble)
+{
+  // Write a 4-bpp pixel directly into the epdiy framebuffer.
+  // x: 0..EPD_WIDTH-1 (960), y: 0..EPD_HEIGHT-1 (540)
+  uint8_t * buf_ptr = &s_framebuffer[y * (EPD_WIDTH / 2) + (x >> 1)];
+  if (x & 1) {
+    *buf_ptr = (uint8_t)((*buf_ptr & 0x0F) | ((nibble & 0x0F) << 4));
+  } else {
+    *buf_ptr = (uint8_t)((*buf_ptr & 0xF0) | (nibble & 0x0F));
+  }
+}
+
+static inline void set_pixel_nibble_screen(uint16_t x, uint16_t y, uint8_t nibble)
+{
+  // Screen coordinates for Paper S3 are logical portrait (width=540, height=960)
+  // with epdiy set to EPD_ROT_INVERTED_PORTRAIT.
+  // The equivalent physical coordinates in the 960x540 framebuffer are:
+  //   x_phys = y
+  //   y_phys = (EPD_HEIGHT - 1) - x
+  set_pixel_nibble_physical(y, (uint16_t)((EPD_HEIGHT - 1) - x), nibble);
 }
 
 void Screen::draw_bitmap(const unsigned char * bitmap_data, Dim dim, Pos pos)
@@ -145,11 +183,12 @@ void Screen::draw_bitmap(const unsigned char * bitmap_data, Dim dim, Pos pos)
   if (x_max > width)  x_max = width;
   if (y_max > height) y_max = height;
 
-  for (uint16_t y = pos.y, q = 0; y < y_max; ++y, ++q) {
-    for (uint16_t x = pos.x, p = q * dim.width; x < x_max; ++x, ++p) {
-      uint8_t v = bitmap_data[p];
-      uint8_t c = map_gray(v);
-      epd_draw_pixel(x, y, c, s_framebuffer);
+  // For best locality with the rotated coordinate system, iterate X (screen) outer.
+  for (uint16_t x = pos.x; x < x_max; ++x) {
+    for (uint16_t y = pos.y; y < y_max; ++y) {
+      const uint32_t p = (uint32_t)(y - pos.y) * dim.width + (x - pos.x);
+      const uint8_t v = bitmap_data[p];
+      set_pixel_nibble_screen(x, y, gray8_to_nibble(v));
     }
   }
 }
@@ -164,13 +203,17 @@ void Screen::draw_glyph(const unsigned char * bitmap_data, Dim dim, Pos pos, uin
   if (x_max > width)  x_max = width;
   if (y_max > height) y_max = height;
 
-  for (uint16_t j = 0; j < dim.height && (pos.y + j) < y_max; ++j) {
-    const uint8_t *row = bitmap_data + j * pitch;
-    for (uint16_t i = 0; i < dim.width && (pos.x + i) < x_max; ++i) {
-      uint8_t v = row[i];
-      if (!v) continue; // background
-      uint8_t c = map_gray(v);
-      epd_draw_pixel(pos.x + i, pos.y + j, c, s_framebuffer);
+  // Glyph buffer is 8-bit alpha (0=transparent..255=opaque). We draw it as
+  // black with intensity proportional to alpha.
+  for (uint16_t i = 0; i < dim.width && (pos.x + i) < x_max; ++i) {
+    const uint16_t x = (uint16_t)(pos.x + i);
+    for (uint16_t j = 0; j < dim.height && (pos.y + j) < y_max; ++j) {
+      const uint16_t y = (uint16_t)(pos.y + j);
+      const uint8_t a = bitmap_data[j * pitch + i];
+      if (!a) continue;
+      const uint8_t nib = alpha8_to_nibble(a);
+      if (nib == 0x0F) continue;
+      set_pixel_nibble_screen(x, y, nib);
     }
   }
 }
@@ -179,14 +222,24 @@ void Screen::draw_rectangle(Dim dim, Pos pos, uint8_t color)
 {
   if (!s_epd_initialized) return;
 
-  EpdRect r {
-    .x = (int)pos.x,
-    .y = (int)pos.y,
-    .width  = (int)dim.width,
-    .height = (int)dim.height,
-  };
-  uint8_t c = map_gray(color);
-  epd_draw_rect(r, c, s_framebuffer);
+  uint16_t x_max = pos.x + dim.width;
+  uint16_t y_max = pos.y + dim.height;
+  if (x_max > width)  x_max = width;
+  if (y_max > height) y_max = height;
+  if (x_max <= pos.x || y_max <= pos.y) return;
+
+  const uint8_t nib = gray3_to_nibble(color);
+
+  // Top and bottom edges
+  for (uint16_t x = pos.x; x < x_max; ++x) {
+    set_pixel_nibble_screen(x, pos.y, nib);
+    set_pixel_nibble_screen(x, (uint16_t)(y_max - 1), nib);
+  }
+  // Left and right edges
+  for (uint16_t y = pos.y; y < y_max; ++y) {
+    set_pixel_nibble_screen(pos.x, y, nib);
+    set_pixel_nibble_screen((uint16_t)(x_max - 1), y, nib);
+  }
 }
 
 void Screen::draw_round_rectangle(Dim dim, Pos pos, uint8_t color)
@@ -199,14 +252,19 @@ void Screen::colorize_region(Dim dim, Pos pos, uint8_t color)
 {
   if (!s_epd_initialized) return;
 
-  EpdRect r {
-    .x = (int)pos.x,
-    .y = (int)pos.y,
-    .width  = (int)dim.width,
-    .height = (int)dim.height,
-  };
-  uint8_t c = map_gray(color);
-  epd_fill_rect(r, c, s_framebuffer);
+  uint16_t x_max = pos.x + dim.width;
+  uint16_t y_max = pos.y + dim.height;
+  if (x_max > width)  x_max = width;
+  if (y_max > height) y_max = height;
+  if (x_max <= pos.x || y_max <= pos.y) return;
+
+  const uint8_t nib = gray3_to_nibble(color);
+
+  for (uint16_t x = pos.x; x < x_max; ++x) {
+    for (uint16_t y = pos.y; y < y_max; ++y) {
+      set_pixel_nibble_screen(x, y, nib);
+    }
+  }
 }
 
 #endif // BOARD_TYPE_PAPER_S3
