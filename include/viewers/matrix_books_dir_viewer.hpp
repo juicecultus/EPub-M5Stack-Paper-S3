@@ -16,8 +16,8 @@ class MatrixBooksDirViewer : public BooksDirViewer
 
     static const int16_t TITLE_FONT                =  1;
     static const int16_t AUTHOR_FONT               =  2;
-    static const int16_t TITLE_FONT_SIZE           = 11;
-    static const int16_t AUTHOR_FONT_SIZE          =  9;
+    static const int16_t TITLE_FONT_SIZE           =  8;
+    static const int16_t AUTHOR_FONT_SIZE          =  6;
     static const int16_t MIN_SPACE_BETWEEN_ENTRIES =  6;
     static const int16_t SPACE_BELOW_INFO          = 10;
     static const int16_t SPACE_ABOVE_PAGENBR       =  5;

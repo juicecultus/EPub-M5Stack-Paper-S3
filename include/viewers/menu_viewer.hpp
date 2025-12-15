@@ -53,7 +53,7 @@ class MenuViewer
     uint16_t icon_ypos,
              text_ypos;
 
-    #if (INKPLATE_6PLUS || TOUCH_TRIAL)
+    #if (INKPLATE_6PLUS || TOUCH_TRIAL || defined(BOARD_TYPE_PAPER_S3))
       bool    hint_shown;
       uint8_t find_index(uint16_t x, uint16_t y);
     #endif
@@ -63,6 +63,9 @@ class MenuViewer
       Dim dim;
     } entry_locs[MAX_MENU_ENTRY];
     MenuEntry * menu;
+
+    uint8_t page_index = 0;
+    uint8_t page_count = 1;
 };
 
 #if __MENU_VIEWER__

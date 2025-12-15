@@ -177,11 +177,30 @@ MatrixBooksDirViewer::show_page(int16_t page_nbr, int16_t hightlight_item_idx)
   }
 
   #if (INKPLATE_6PLUS || TOUCH_TRIAL)
-    fmt.screen_top = 10 + title_font_height;
-    page.set_limits(fmt);
-    page.new_paragraph(fmt);
-    page.add_text(TOUCH_AND_HOLD_STR, fmt);
-    page.end_paragraph(fmt);
+    #if defined(BOARD_TYPE_PAPER_S3)
+      {
+        static constexpr int16_t HINT_SIZE = 8;
+        Font * hint_font = fonts.get(1);
+        if (hint_font != nullptr) {
+          Page::Format hint_fmt = fmt;
+          hint_fmt.font_index = 1;
+          hint_fmt.font_size  = HINT_SIZE;
+          hint_fmt.align      = CSS::Align::LEFT;
+
+          const int16_t pad_x  = 10;
+          const int16_t pad_y  = 2;
+          const int16_t ascent = (int16_t)hint_font->get_chars_height(HINT_SIZE);
+          const int16_t y      = 10 + pad_y + ascent;
+          page.put_str_at(TOUCH_AND_HOLD_STR, Pos(pad_x, y), hint_fmt);
+        }
+      }
+    #else
+      fmt.screen_top = 10 + title_font_height;
+      page.set_limits(fmt);
+      page.new_paragraph(fmt);
+      page.add_text(TOUCH_AND_HOLD_STR, fmt);
+      page.end_paragraph(fmt);
+    #endif
   #endif
 
   page.put_highlight(Dim(Screen::get_width() - 20, 3), Pos(10, first_entry_ypos - 8));
@@ -385,11 +404,30 @@ MatrixBooksDirViewer::clear_highlight()
                     Pos(10, 10));
 
   #if (INKPLATE_6PLUS || TOUCH_TRIAL)
-    fmt.screen_top = 10 + title_font_height;
-    page.set_limits(fmt);
-    page.new_paragraph(fmt);
-    page.add_text(TOUCH_AND_HOLD_STR, fmt);
-    page.end_paragraph(fmt);
+    #if defined(BOARD_TYPE_PAPER_S3)
+      {
+        static constexpr int16_t HINT_SIZE = 8;
+        Font * hint_font = fonts.get(1);
+        if (hint_font != nullptr) {
+          Page::Format hint_fmt = fmt;
+          hint_fmt.font_index = 1;
+          hint_fmt.font_size  = HINT_SIZE;
+          hint_fmt.align      = CSS::Align::LEFT;
+
+          const int16_t pad_x  = 10;
+          const int16_t pad_y  = 2;
+          const int16_t ascent = (int16_t)hint_font->get_chars_height(HINT_SIZE);
+          const int16_t y      = 10 + pad_y + ascent;
+          page.put_str_at(TOUCH_AND_HOLD_STR, Pos(pad_x, y), hint_fmt);
+        }
+      }
+    #else
+      fmt.screen_top = 10 + title_font_height;
+      page.set_limits(fmt);
+      page.new_paragraph(fmt);
+      page.add_text(TOUCH_AND_HOLD_STR, fmt);
+      page.end_paragraph(fmt);
+    #endif
   #endif
 
   #if EPUB_INKPLATE_BUILD && !BOARD_TYPE_PAPER_S3
