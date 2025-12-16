@@ -181,7 +181,7 @@ class FormChoiceField : public FormField
 {
   public:
     static constexpr FormChoice dir_view_choices[2] = {
-      { "LINEAR",     0 },
+      { "Shelf",      0 },
       { "MATRIX",     1 }
     };
 
