@@ -31,7 +31,6 @@ extern "C" {
 
 static FASTEPD s_epd;
 static bool s_epd_initialized = false;
-static uint8_t *s_framebuffer = nullptr;
 static bool s_force_full = true;
 static int16_t s_partial_count = 0;
 static const int16_t PARTIAL_COUNT_ALLOWED = 10;
@@ -134,7 +133,6 @@ void Screen::setup(PixelResolution resolution, Orientation orientation)
     // contrast (at the cost of slower updates).
     s_epd.setPasses(4, 9);
     s_epd.setRotation(90);
-    s_framebuffer = s_epd.currentBuffer();
 
     s_epd.fillScreen(0x0F);
     s_epd.fullUpdate(CLEAR_FAST, true, nullptr);
@@ -170,8 +168,13 @@ void Screen::set_orientation(Orientation orient)
   // logical portrait space of 540x960 (EPD_HEIGHT x EPD_WIDTH). Keep the
   // logical Screen dimensions fixed to that space regardless of the
   // orientation enum so the layout engine can use the full page.
-  width  = EPD_HEIGHT;  // 540
-  height = EPD_WIDTH;   // 960
+  if (s_epd_initialized) {
+    width  = (uint16_t)s_epd.width();
+    height = (uint16_t)s_epd.height();
+  } else {
+    width  = EPD_HEIGHT;  // 540
+    height = EPD_WIDTH;   // 960
+  }
 }
 
 static inline uint8_t map_gray(uint8_t v)
@@ -235,24 +238,14 @@ static inline uint8_t gray3_to_nibble(uint8_t v)
 
 static inline void set_pixel_nibble_physical(uint16_t x, uint16_t y, uint8_t nibble)
 {
-  // Write a 4-bpp pixel directly into the epdiy framebuffer.
-  // x: 0..EPD_WIDTH-1 (960), y: 0..EPD_HEIGHT-1 (540)
-  uint8_t * buf_ptr = &s_framebuffer[y * (EPD_WIDTH / 2) + (x >> 1)];
-  if (x & 1) {
-    *buf_ptr = (uint8_t)((*buf_ptr & 0xF0) | (nibble & 0x0F));
-  } else {
-    *buf_ptr = (uint8_t)((*buf_ptr & 0x0F) | ((nibble & 0x0F) << 4));
-  }
+  // Route all drawing through FastEPD so rotation and pixel packing are
+  // handled consistently by the library.
+  s_epd.drawPixelFast((int)x, (int)y, (uint8_t)(nibble & 0x0F));
 }
 
 static inline void set_pixel_nibble_screen(uint16_t x, uint16_t y, uint8_t nibble)
 {
-  // Screen coordinates for Paper S3 are logical portrait (width=540, height=960)
-  // with epdiy set to EPD_ROT_INVERTED_PORTRAIT.
-  // The equivalent physical coordinates in the 960x540 framebuffer are:
-  //   x_phys = y
-  //   y_phys = (EPD_HEIGHT - 1) - x
-  set_pixel_nibble_physical(y, (uint16_t)((EPD_HEIGHT - 1) - x), nibble);
+  set_pixel_nibble_physical(x, y, nibble);
 }
 
 void Screen::draw_bitmap(const unsigned char * bitmap_data, Dim dim, Pos pos)
@@ -276,6 +269,8 @@ void Screen::draw_bitmap(const unsigned char * bitmap_data, Dim dim, Pos pos)
     for (int32_t y = y_start; y < y_end; ++y) {
       const int32_t sy = y - y0;
       const uint32_t p = (uint32_t)sy * (uint32_t)dim.width + (uint32_t)sx;
+      // Image decoders in this codebase produce 8-bit grayscale where
+      // 0=black..255=white. FastEPD 4-bpp uses 0=black..15=white.
       const uint8_t v = bitmap_data[p];
       set_pixel_nibble_screen((uint16_t)x, (uint16_t)y, gray8_to_nibble_dither(v, (uint16_t)x, (uint16_t)y));
     }
