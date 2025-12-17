@@ -14,9 +14,49 @@
 #if EPUB_INKPLATE_BUILD
   #include "nvs.h"
   #include "inkplate_platform.hpp"
+  #include "esp.hpp"
 #endif
 
 char MsgViewer::icon_char[7] = { 'I',  '!', 'H', 'E', 'S', 'Y', '!' };
+
+void
+MsgViewer::auto_dismiss_in(uint32_t delay_ms, void (*restore)())
+{
+  #if defined(BOARD_TYPE_PAPER_S3) && EPUB_INKPLATE_BUILD
+    dismiss_active   = true;
+    dismiss_restore  = restore;
+    dismiss_at_ms    = (uint32_t)ESP::millis() + delay_ms;
+  #else
+    (void)delay_ms;
+    (void)restore;
+  #endif
+}
+
+void
+MsgViewer::clear_auto_dismiss()
+{
+  dismiss_active   = false;
+  dismiss_at_ms    = 0;
+  dismiss_restore  = nullptr;
+}
+
+void
+MsgViewer::tick()
+{
+  #if defined(BOARD_TYPE_PAPER_S3) && EPUB_INKPLATE_BUILD
+    if (!dismiss_active) return;
+
+    const uint32_t now_ms = (uint32_t)ESP::millis();
+    if ((int32_t)(now_ms - dismiss_at_ms) < 0) return;
+
+    void (*restore)() = dismiss_restore;
+    clear_auto_dismiss();
+
+    if (restore != nullptr) {
+      (*restore)();
+    }
+  #endif
+}
 
 void MsgViewer::show(
   MsgType msg_type, 
@@ -30,6 +70,8 @@ void MsgViewer::show(
   width = Screen::get_width() - 60;
 
   if (page.get_compute_mode() == Page::ComputeMode::LOCATION) return; // Cannot be used durint location computation
+
+  clear_auto_dismiss();
 
   va_list args;
   va_start(args, fmt_str);

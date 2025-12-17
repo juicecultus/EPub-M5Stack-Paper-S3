@@ -25,9 +25,6 @@ FormChoice FormChoiceField::font_choices[8] = {
   bool 
   FormDone::event(const EventMgr::Event & event) 
   { 
-  #if defined(BOARD_TYPE_PAPER_S3)
-    screen.force_full_update();
-  #endif
     form_viewer.set_completed(true); 
     return false; 
   }

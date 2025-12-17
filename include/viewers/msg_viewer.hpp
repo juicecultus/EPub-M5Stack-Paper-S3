@@ -24,6 +24,10 @@ class MsgViewer {
     static constexpr uint16_t HEIGHT  = 300;
     static constexpr uint16_t HEIGHT2 = 450;
 
+    bool dismiss_active = false;
+    uint32_t dismiss_at_ms = 0;
+    void (*dismiss_restore)() = nullptr;
+
     struct DotsZone {
       Pos pos;
       Dim dim;
@@ -51,6 +55,10 @@ class MsgViewer {
       bool clear_screen,
       const char * title, 
       const char * fmt_str, ...);
+
+    void auto_dismiss_in(uint32_t delay_ms, void (*restore)());
+    void clear_auto_dismiss();
+    void tick();
     
     bool confirm(const EventMgr::Event & event, bool & ok);
 

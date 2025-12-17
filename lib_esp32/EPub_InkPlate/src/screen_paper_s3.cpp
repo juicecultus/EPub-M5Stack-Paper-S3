@@ -94,10 +94,11 @@ void Screen::update(bool no_full)
   // In 4-bpp mode (Paper S3 grayscale), repeatedly doing updates with CLEAR_NONE
   // tends to accumulate ghosting and reduces contrast, which makes text/lines
   // look fuzzy. Prefer quality-first clears.
-  (void)no_full;
-
   int clear_mode;
-  if (s_force_full) {
+  if (no_full) {
+    clear_mode = CLEAR_FAST;
+  }
+  else if (s_force_full) {
     clear_mode = CLEAR_SLOW;
     s_force_full = false;
     s_partial_count = PARTIAL_COUNT_ALLOWED;

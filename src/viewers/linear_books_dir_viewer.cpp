@@ -242,29 +242,48 @@ LinearBooksDirViewer::show_page(int16_t page_nbr, int16_t hightlight_item_idx)
       const int16_t cover_w = cover_box_w;
       const int16_t cover_h = cover_box_h;
 
+      const int16_t pad_x = (cover_w >= 10) ? (int16_t)(cover_w / 10) : 0;
+      const int16_t pad_y = (cover_h >= 10) ? (int16_t)(cover_h / 10) : 0;
+      const int16_t inner_x = (int16_t)(cover_x + pad_x);
+      const int16_t inner_y = (int16_t)(cover_y + pad_y);
+      const int16_t inner_w = (int16_t)(cover_w - (pad_x * 2));
+      const int16_t inner_h = (int16_t)(cover_h - (pad_y * 2));
+
       page.clear_region(Dim(cover_w, cover_h), Pos(cover_x, cover_y));
       page.put_highlight(Dim(cover_w, cover_h), Pos(cover_x, cover_y));
 
-      static constexpr int16_t PLACEHOLDER_SIZE = 8;
-      Page::Format ph_fmt = fmt;
-      ph_fmt.font_index = 1;
-      ph_fmt.font_size  = PLACEHOLDER_SIZE;
-      ph_fmt.font_style = Fonts::FaceStyle::NORMAL;
-      ph_fmt.align      = CSS::Align::CENTER;
+      Image::ImageData thumb;
+      if ((inner_w > 0) && (inner_h > 0) && books_dir.get_cover_thumbnail(book->id, Dim(inner_w, inner_h), thumb) && (thumb.bitmap != nullptr)) {
+        int16_t draw_w = (int16_t)thumb.dim.width;
+        int16_t draw_h = (int16_t)thumb.dim.height;
+        int16_t draw_x = (int16_t)(inner_x + ((inner_w - draw_w) >> 1));
+        int16_t draw_y = (int16_t)(inner_y + ((inner_h - draw_h) >> 1));
+        if (draw_x < inner_x) draw_x = inner_x;
+        if (draw_y < inner_y) draw_y = inner_y;
+        page.put_image(thumb, Pos(draw_x, draw_y));
+      }
+      else {
+        static constexpr int16_t PLACEHOLDER_SIZE = 8;
+        Page::Format ph_fmt = fmt;
+        ph_fmt.font_index = 1;
+        ph_fmt.font_size  = PLACEHOLDER_SIZE;
+        ph_fmt.font_style = Fonts::FaceStyle::NORMAL;
+        ph_fmt.align      = CSS::Align::CENTER;
 
-      Font * ph_font = fonts.get(ph_fmt.font_index);
-      if (ph_font != nullptr) {
-        const int16_t ascent = (int16_t)ph_font->get_chars_height(PLACEHOLDER_SIZE);
-        const int16_t line_h = (int16_t)ph_font->get_line_height(PLACEHOLDER_SIZE);
-        const int16_t total_h = (int16_t)(3 * line_h);
+        Font * ph_font = fonts.get(ph_fmt.font_index);
+        if (ph_font != nullptr) {
+          const int16_t ascent = (int16_t)ph_font->get_chars_height(PLACEHOLDER_SIZE);
+          const int16_t line_h = (int16_t)ph_font->get_line_height(PLACEHOLDER_SIZE);
+          const int16_t total_h = (int16_t)(3 * line_h);
 
-        int16_t top = (int16_t)(cover_y + ((cover_h - total_h) >> 1));
-        if (top < cover_y) top = cover_y;
+          int16_t top = (int16_t)(inner_y + ((inner_h - total_h) >> 1));
+          if (top < inner_y) top = inner_y;
 
-        const int16_t cx = (int16_t)(cover_x + (cover_w >> 1));
-        page.put_str_at("Cover", Pos(cx, (int16_t)(top + ascent)), ph_fmt);
-        page.put_str_at("not", Pos(cx, (int16_t)(top + line_h + ascent)), ph_fmt);
-        page.put_str_at("available", Pos(cx, (int16_t)(top + (2 * line_h) + ascent)), ph_fmt);
+          const int16_t cx = (int16_t)(inner_x + (inner_w >> 1));
+          page.put_str_at("Cover", Pos(cx, (int16_t)(top + ascent)), ph_fmt);
+          page.put_str_at("not", Pos(cx, (int16_t)(top + line_h + ascent)), ph_fmt);
+          page.put_str_at("available", Pos(cx, (int16_t)(top + (2 * line_h) + ascent)), ph_fmt);
+        }
       }
     #else
       Image::ImageData image(Dim(book->cover_width, book->cover_height), 

@@ -7,6 +7,10 @@
 
 #include "models/epub.hpp"
 
+#if defined(BOARD_TYPE_PAPER_S3)
+  #include "models/image.hpp"
+#endif
+
 #include <vector>
 #include <map>
 #include <iostream>
@@ -83,8 +87,18 @@ class BooksDir
     EBookRecord book;                  ///< Book Record structure prepared to return to the caller
     int16_t current_book_idx;          ///< Current book index present in the book structure
 
+    #if defined(BOARD_TYPE_PAPER_S3)
+      int16_t cover_loader_next_idx;
+      bool    cover_loader_initialized;
+      std::vector<uint8_t> cover_ready;
+    #endif
+
   public:
-    BooksDir() : current_book_idx(-1) { }
+    BooksDir() : current_book_idx(-1)
+      #if defined(BOARD_TYPE_PAPER_S3)
+        , cover_loader_next_idx(0), cover_loader_initialized(false)
+      #endif
+    { }
    ~BooksDir() {
       sorted_index.clear();
       close_db(); 
@@ -179,6 +193,14 @@ class BooksDir
     void close_db() { db.close(); }
 
     void show_db();
+
+    #if defined(BOARD_TYPE_PAPER_S3)
+      void reset_cover_loader();
+      bool process_next_cover(int16_t & updated_book_idx);
+
+      bool get_cover_thumbnail(uint32_t id, Dim max_dim, Image::ImageData & out);
+      bool get_full_cover(uint32_t id, uint8_t ** bitmap, Dim & dim);
+    #endif
 };
 
 #if __BOOKS_DIR__

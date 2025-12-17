@@ -361,6 +361,8 @@ void EventMgr::loop()
       return;
     }
 
+    app_controller.input_event(event);
+
     if (!stay_on) {
       int8_t timeout_minutes = 0;
       config.get(Config::Ident::TIMEOUT, &timeout_minutes);

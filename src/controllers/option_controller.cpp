@@ -126,6 +126,9 @@ static FormEntry font_params_form_entries[FONT_FORM_SIZE] = {
   };
 #endif
 
+static void restore_option_menu();
+static void option_about();
+
 extern bool start_web_server();
 extern bool  stop_web_server();
 
@@ -219,6 +222,8 @@ init_nvs()
         false,
         "E-Books History Cleared", 
         "The E-Books History has been initialized with success.");
+
+      msg_viewer.auto_dismiss_in(5000, restore_option_menu);
     }
     else {
       msg_viewer.show(
@@ -228,6 +233,8 @@ init_nvs()
         "E-Books History Clearing Error", 
         "The E-Books History has not been initialized properly. "
         "Potential hardware problem or software framework issue.");
+
+      msg_viewer.auto_dismiss_in(5000, restore_option_menu);
     }
   #endif
 }
@@ -351,13 +358,30 @@ static MenuViewer::MenuEntry menu[] = {
   #if EPUB_LINUX_BUILD && DEBUGGING
     { MenuViewer::Icon::DEBUG,       "Debugging",                            debugging                        , true,  true  },
   #endif
-  { MenuViewer::Icon::INFO,          "About the EPub-InkPlate application",  CommonActions::about             , true,  true  },
+  { MenuViewer::Icon::INFO,          "About the EPub-InkPlate application",  option_about                     , true,  true  },
   { MenuViewer::Icon::POWEROFF,      "Power OFF (Deep Sleep)",               CommonActions::power_it_off      , true,  true  },
   #if INKPLATE_6PLUS || MENU_6PLUS
     { MenuViewer::Icon::NEXT_MENU,   "Other options",                        goto_next                        , true,  true  },
   #endif
   { MenuViewer::Icon::END_MENU,       nullptr,                               nullptr                          , false, false }
 };
+
+static void
+restore_option_menu()
+{
+  #if defined(BOARD_TYPE_PAPER_S3)
+    menu_viewer.show(menu, 0, false);
+  #else
+    menu_viewer.show(menu);
+  #endif
+}
+
+static void
+option_about()
+{
+  CommonActions::about();
+  msg_viewer.auto_dismiss_in(5000, restore_option_menu);
+}
 
 #if INKPLATE_6PLUS
 static MenuViewer::MenuEntry sub_menu[] = {
@@ -394,7 +418,11 @@ OptionController::set_font_count(uint8_t count)
 void 
 OptionController::enter()
 {
-  menu_viewer.show(menu);
+  #if defined(BOARD_TYPE_PAPER_S3)
+    menu_viewer.show(menu, 0, true);
+  #else
+    menu_viewer.show(menu);
+  #endif
   main_form_is_shown = false;
   font_form_is_shown = false;
 }
@@ -476,7 +504,7 @@ OptionController::input_event(const EventMgr::Event & event)
         }
         else {
           #if defined(BOARD_TYPE_PAPER_S3)
-            menu_viewer.show(menu, 2, true);
+            menu_viewer.show(menu, 2, false);
           #else
             menu_viewer.clear_highlight();
           #endif
@@ -513,7 +541,7 @@ OptionController::input_event(const EventMgr::Event & event)
         }
       // }
       #if defined(BOARD_TYPE_PAPER_S3)
-        menu_viewer.show(menu, 3, true);
+        menu_viewer.show(menu, 3, false);
       #else
         menu_viewer.clear_highlight();
       #endif
@@ -525,7 +553,7 @@ OptionController::input_event(const EventMgr::Event & event)
       if (form_viewer.event(event)) {
         date_time_form_is_shown = false;
         #if defined(BOARD_TYPE_PAPER_S3)
-          menu_viewer.show(menu, 7, true);
+          menu_viewer.show(menu, 7, false);
         #else
           menu_viewer.clear_highlight();
         #endif

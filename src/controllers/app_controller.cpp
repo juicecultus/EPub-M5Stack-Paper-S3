@@ -12,6 +12,8 @@
 #include "controllers/toc_controller.hpp"
 #include "controllers/event_mgr.hpp"
 
+#include "viewers/msg_viewer.hpp"
+
 #if INKPLATE_6PLUS
   #include "controllers/back_lit.hpp"
 #endif
@@ -100,6 +102,8 @@ void AppController::launch()
 void 
 AppController::input_event(const EventMgr::Event & event)
 {
+  msg_viewer.tick();
+
   if (next_ctrl != Ctrl::NONE) launch();
 
   #if INKPLATE_6PLUS

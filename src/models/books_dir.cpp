@@ -7,6 +7,7 @@
 
 #include "models/epub.hpp"
 #include "models/default_cover.hpp"
+#include "models/image_factory.hpp"
 #include "viewers/book_viewer.hpp"
 #include "viewers/msg_viewer.hpp"
 #include "alloc.hpp"
@@ -22,7 +23,434 @@ extern "C" {
 
 #include <sys/stat.h>
 #include <stdlib.h>
-#include <sstream>
+#include <stdio.h>
+
+#if defined(BOARD_TYPE_PAPER_S3)
+  #include <errno.h>
+  #include "screen.hpp"
+  #include "stb_image_resize.h"
+
+  static constexpr uint32_t COVERS_MAGIC = 0x32525643; // 'CVR2'
+  static constexpr char const * COVERS_DIR = MAIN_FOLDER "/covers";
+
+  static constexpr int16_t THUMB_CACHE_SLOTS = 6;
+
+  struct ThumbCacheSlot {
+    bool     valid;
+    uint32_t id;
+    uint16_t max_w;
+    uint16_t max_h;
+    uint16_t w;
+    uint16_t h;
+    uint32_t last_used;
+    uint8_t * bitmap;
+  };
+
+  static ThumbCacheSlot s_thumb_cache[THUMB_CACHE_SLOTS];
+  static uint32_t s_thumb_cache_use_counter = 1;
+
+  static std::string cover_cache_path(uint32_t id)
+  {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%08x.cvr", (unsigned)id);
+    std::string p = COVERS_DIR;
+    p += "/";
+    p += buf;
+    return p;
+  }
+
+  static void ensure_cover_dir()
+  {
+    if (mkdir(COVERS_DIR, 0777) != 0) {
+      if (errno != EEXIST) {
+        // ignore
+      }
+    }
+  }
+
+  struct CoverFileHeader {
+    uint32_t magic;
+    uint16_t w;
+    uint16_t h;
+    uint32_t reserved0;
+  };
+
+  static bool read_cover_header(uint32_t id, uint16_t & w, uint16_t & h)
+  {
+    w = 0;
+    h = 0;
+
+    const std::string path = cover_cache_path(id);
+    FILE * f = fopen(path.c_str(), "rb");
+    if (f == nullptr) return false;
+
+    CoverFileHeader hdr;
+    if (fread(&hdr, sizeof(hdr), 1, f) != 1) {
+      fclose(f);
+      return false;
+    }
+    if (hdr.magic != COVERS_MAGIC) {
+      fclose(f);
+      return false;
+    }
+    if (hdr.w == 0 || hdr.h == 0 || hdr.w > Screen::get_width() || hdr.h > Screen::get_height()) {
+      fclose(f);
+      return false;
+    }
+
+    // Validate file length to avoid treating truncated/corrupt files as valid cache.
+    const size_t need = sizeof(CoverFileHeader) + ((size_t)hdr.w * (size_t)hdr.h);
+    if (fseek(f, 0, SEEK_END) != 0) {
+      fclose(f);
+      return false;
+    }
+    long end_pos = ftell(f);
+    if (end_pos < 0 || (size_t)end_pos < need) {
+      fclose(f);
+      return false;
+    }
+
+    fclose(f);
+
+    w = hdr.w;
+    h = hdr.h;
+    return true;
+  }
+
+  static bool read_cover_file(uint32_t id, uint16_t & w, uint16_t & h, uint8_t * out)
+  {
+    if (out == nullptr) return false;
+    if (!read_cover_header(id, w, h)) return false;
+
+    const std::string path = cover_cache_path(id);
+    FILE * f = fopen(path.c_str(), "rb");
+    if (f == nullptr) return false;
+
+    CoverFileHeader hdr;
+    if (fread(&hdr, sizeof(hdr), 1, f) != 1) {
+      fclose(f);
+      return false;
+    }
+    if (hdr.magic != COVERS_MAGIC) {
+      fclose(f);
+      return false;
+    }
+
+    const size_t sz = (size_t)hdr.w * (size_t)hdr.h;
+    if (fread(out, 1, sz, f) != sz) {
+      fclose(f);
+      return false;
+    }
+    fclose(f);
+
+    w = hdr.w;
+    h = hdr.h;
+    return true;
+  }
+
+  static bool write_cover_file(uint32_t id, uint16_t w, uint16_t h, const uint8_t * data)
+  {
+    if (data == nullptr) return false;
+    if (w == 0 || h == 0 || w > Screen::get_width() || h > Screen::get_height()) return false;
+
+    ensure_cover_dir();
+
+    const std::string path = cover_cache_path(id);
+    FILE * f = fopen(path.c_str(), "wb");
+    if (f == nullptr) return false;
+
+    CoverFileHeader hdr;
+    hdr.magic = COVERS_MAGIC;
+    hdr.w = w;
+    hdr.h = h;
+    hdr.reserved0 = 0;
+    if (fwrite(&hdr, sizeof(hdr), 1, f) != 1) {
+      fclose(f);
+      return false;
+    }
+    const size_t sz = (size_t)w * (size_t)h;
+    if (fwrite(data, 1, sz, f) != sz) {
+      fclose(f);
+      return false;
+    }
+    fflush(f);
+    fclose(f);
+    return true;
+  }
+
+  static ThumbCacheSlot * thumb_cache_find(uint32_t id, uint16_t max_w, uint16_t max_h)
+  {
+    for (int i = 0; i < THUMB_CACHE_SLOTS; ++i) {
+      if (s_thumb_cache[i].valid && s_thumb_cache[i].id == id && s_thumb_cache[i].max_w == max_w && s_thumb_cache[i].max_h == max_h) {
+        s_thumb_cache[i].last_used = s_thumb_cache_use_counter++;
+        return &s_thumb_cache[i];
+      }
+    }
+    return nullptr;
+  }
+
+  static ThumbCacheSlot * thumb_cache_get_slot(uint32_t id, uint16_t max_w, uint16_t max_h)
+  {
+    ThumbCacheSlot * slot = thumb_cache_find(id, max_w, max_h);
+    if (slot != nullptr) return slot;
+
+    int best = -1;
+    uint32_t best_score = 0;
+    for (int i = 0; i < THUMB_CACHE_SLOTS; ++i) {
+      if (!s_thumb_cache[i].valid) {
+        best = i;
+        break;
+      }
+      if (best == -1 || s_thumb_cache[i].last_used < best_score) {
+        best = i;
+        best_score = s_thumb_cache[i].last_used;
+      }
+    }
+
+    slot = &s_thumb_cache[best];
+    if (slot->bitmap != nullptr) {
+      free(slot->bitmap);
+      slot->bitmap = nullptr;
+    }
+    slot->valid = false;
+    slot->id = id;
+    slot->max_w = max_w;
+    slot->max_h = max_h;
+    slot->w = 0;
+    slot->h = 0;
+    slot->last_used = s_thumb_cache_use_counter++;
+    return slot;
+  }
+#endif
+
+#if defined(BOARD_TYPE_PAPER_S3)
+
+void
+BooksDir::reset_cover_loader()
+{
+  cover_loader_next_idx = 0;
+  cover_loader_initialized = true;
+
+  const int16_t book_count = get_book_count();
+  if (book_count < 0) {
+    cover_ready.clear();
+  }
+  else {
+    cover_ready.assign((size_t)book_count, 0);
+  }
+}
+
+bool
+BooksDir::process_next_cover(int16_t & updated_book_idx)
+{
+  updated_book_idx = -1;
+  const int16_t book_count = get_book_count();
+  if (book_count <= 0) return false;
+
+  if (!cover_loader_initialized) {
+    reset_cover_loader();
+  }
+
+  if (cover_loader_next_idx >= book_count) {
+    return false;
+  }
+
+  const int16_t idx = cover_loader_next_idx;
+  cover_loader_next_idx++;
+
+  const EBookRecord * rec = get_book_data((uint16_t)idx);
+  if (rec == nullptr) return false;
+
+  if ((idx >= 0) && ((size_t)idx < cover_ready.size()) && (cover_ready[(size_t)idx] != 0)) {
+    return false;
+  }
+
+  // If already on disk, mark ready.
+  {
+    uint16_t w = 0;
+    uint16_t h = 0;
+    if (read_cover_header(rec->id, w, h)) {
+      if ((idx >= 0) && ((size_t)idx < cover_ready.size())) {
+        cover_ready[(size_t)idx] = 1;
+      }
+      updated_book_idx = idx;
+      return true;
+    }
+  }
+
+  // Decode from epub.
+  std::string book_fname = BOOKS_FOLDER "/";
+  book_fname += rec->filename;
+
+  if (!epub.open_file(book_fname)) {
+    return false;
+  }
+
+  std::string cover_fname = epub.get_cover_filename();
+  if (cover_fname.empty()) {
+    epub.close_file();
+
+    if ((idx >= 0) && ((size_t)idx < cover_ready.size())) {
+      cover_ready[(size_t)idx] = 1;
+    }
+    return false;
+  }
+
+  std::string located = epub.filename_locate(cover_fname.c_str());
+  const Dim decode_max(
+    (uint16_t)(Screen::get_width() * 2),
+    (uint16_t)(Screen::get_height() * 2));
+
+  Image * img = ImageFactory::create(located, decode_max, true);
+  if (img == nullptr || img->get_bitmap() == nullptr) {
+    if (img != nullptr) delete img;
+    epub.close_file();
+
+    if ((idx >= 0) && ((size_t)idx < cover_ready.size())) {
+      cover_ready[(size_t)idx] = 1;
+    }
+    return false;
+  }
+
+  const int32_t sw = (int32_t)Screen::get_width();
+  const int32_t sh = (int32_t)Screen::get_height();
+  int32_t w = (int32_t)img->get_dim().width;
+  int32_t h = (int32_t)img->get_dim().height;
+  if (w < 1) w = 1;
+  if (h < 1) h = 1;
+
+  // Fit into the physical screen bounds while preserving aspect ratio.
+  if (w > 0 && h > 0) {
+    // Scale based on whichever dimension constrains us most.
+    const int32_t w_fit_h = (int32_t)((int64_t)w * (int64_t)sh / (int64_t)h);
+    int32_t target_w = w_fit_h;
+    int32_t target_h = sh;
+    if (target_w > sw) {
+      target_w = sw;
+      target_h = (int32_t)((int64_t)h * (int64_t)sw / (int64_t)w);
+    }
+    if (target_w < 1) target_w = 1;
+    if (target_h < 1) target_h = 1;
+
+    img->resize(Dim((uint16_t)target_w, (uint16_t)target_h));
+    w = target_w;
+    h = target_h;
+  }
+
+  const bool wrote = write_cover_file(rec->id, (uint16_t)w, (uint16_t)h, img->get_bitmap());
+
+  delete img;
+  epub.close_file();
+
+  if ((idx >= 0) && ((size_t)idx < cover_ready.size())) {
+    cover_ready[(size_t)idx] = 1;
+  }
+
+  if (!wrote) {
+    return false;
+  }
+
+  updated_book_idx = idx;
+  return true;
+}
+
+bool
+BooksDir::get_full_cover(uint32_t id, uint8_t ** bitmap, Dim & dim)
+{
+  if (bitmap == nullptr) return false;
+
+  uint16_t w = 0;
+  uint16_t h = 0;
+  if (!read_cover_header(id, w, h)) {
+    *bitmap = nullptr;
+    dim = Dim(0, 0);
+    return false;
+  }
+
+  uint8_t * buf = (uint8_t *) allocate((size_t)w * (size_t)h);
+  if (buf == nullptr) {
+    *bitmap = nullptr;
+    dim = Dim(0, 0);
+    return false;
+  }
+
+  if (!read_cover_file(id, w, h, buf)) {
+    free(buf);
+    *bitmap = nullptr;
+    dim = Dim(0, 0);
+    return false;
+  }
+
+  *bitmap = buf;
+  dim = Dim(w, h);
+  return true;
+}
+
+bool
+BooksDir::get_cover_thumbnail(uint32_t id, Dim max_dim, Image::ImageData & out)
+{
+  out.bitmap = nullptr;
+  out.dim = Dim(0, 0);
+
+  if (max_dim.width == 0 || max_dim.height == 0) return false;
+
+  ThumbCacheSlot * cached = thumb_cache_find(id, max_dim.width, max_dim.height);
+  if (cached != nullptr && cached->bitmap != nullptr && cached->w > 0 && cached->h > 0) {
+    out.bitmap = cached->bitmap;
+    out.dim = Dim(cached->w, cached->h);
+    return true;
+  }
+
+  uint8_t * full = nullptr;
+  Dim full_dim(0, 0);
+  if (!get_full_cover(id, &full, full_dim) || full == nullptr) {
+    return false;
+  }
+
+  int32_t src_w = (int32_t)full_dim.width;
+  int32_t src_h = (int32_t)full_dim.height;
+  if (src_w < 1) src_w = 1;
+  if (src_h < 1) src_h = 1;
+
+  // Fit into requested box while preserving aspect ratio (allow upscaling).
+  const int32_t w_fit_h = (int32_t)((int64_t)src_w * (int64_t)max_dim.height / (int64_t)src_h);
+  int32_t dst_w = w_fit_h;
+  int32_t dst_h = (int32_t)max_dim.height;
+  if (dst_w > (int32_t)max_dim.width) {
+    dst_w = (int32_t)max_dim.width;
+    dst_h = (int32_t)((int64_t)src_h * (int64_t)max_dim.width / (int64_t)src_w);
+  }
+  if (dst_w < 1) dst_w = 1;
+  if (dst_h < 1) dst_h = 1;
+
+  uint8_t * thumb = (uint8_t *) allocate((size_t)dst_w * (size_t)dst_h);
+  if (thumb == nullptr) {
+    free(full);
+    return false;
+  }
+
+  stbir_resize_uint8_generic(
+    full,  src_w, src_h, 0,
+    thumb, dst_w, dst_h, 0,
+    1, -1, 0,
+    STBIR_EDGE_CLAMP, STBIR_FILTER_CATMULLROM, STBIR_COLORSPACE_LINEAR,
+    nullptr);
+
+  free(full);
+
+  ThumbCacheSlot * slot = thumb_cache_get_slot(id, max_dim.width, max_dim.height);
+  slot->bitmap = thumb;
+  slot->w = (uint16_t)dst_w;
+  slot->h = (uint16_t)dst_h;
+  slot->valid = true;
+  slot->last_used = s_thumb_cache_use_counter++;
+
+  out.bitmap = slot->bitmap;
+  out.dim = Dim(slot->w, slot->h);
+  return true;
+}
+
+#endif
 
 #if 0
   const uint32_t CRC32_INITIAL    = 0xFFFFFFFFUL;
@@ -234,6 +662,11 @@ BooksDir::get_book_data(uint16_t idx)
     return nullptr;
   }
 
+  #if defined(BOARD_TYPE_PAPER_S3)
+    book.cover_width = 0;
+    book.cover_height = 0;
+  #endif
+
   current_book_idx = idx;
 
   return &book;
@@ -317,6 +750,11 @@ BooksDir::get_book_data_from_db_index(uint16_t idx)
     return nullptr;
   }
 
+  #if defined(BOARD_TYPE_PAPER_S3)
+    book.cover_width = 0;
+    book.cover_height = 0;
+  #endif
+
   current_book_idx = idx;
 
   return &book;
@@ -329,6 +767,12 @@ BooksDir::refresh(char * book_filename, int16_t & book_index, bool force_init)
   //  Build a list of filenames for next step.
 
   LOG_D("Refreshing database content");
+
+  #if defined(BOARD_TYPE_PAPER_S3)
+    cover_loader_initialized = false;
+    cover_loader_next_idx = 0;
+    cover_ready.clear();
+  #endif
 
   EBookRecord   * the_book = nullptr;
   struct dirent * de       = nullptr;
@@ -564,9 +1008,9 @@ BooksDir::refresh(char * book_filename, int16_t & book_index, bool force_init)
             if ((str = epub.get_description())) strlcpy(the_book->description, str, DESCRIPTION_SIZE);
 
             #if defined(BOARD_TYPE_PAPER_S3)
-              memcpy(the_book->cover_bitmap, default_cover, default_cover_width * default_cover_height);
-              the_book->cover_width     = default_cover_width;
-              the_book->cover_height    = default_cover_height;
+              memset(the_book->cover_bitmap, 0xFF, sizeof(the_book->cover_bitmap));
+              the_book->cover_width     = 0;
+              the_book->cover_height    = 0;
             #else
               std::string filename = epub.get_cover_filename();
 

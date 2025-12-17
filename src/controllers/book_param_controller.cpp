@@ -38,6 +38,9 @@ static int8_t old_show_images;
 static int8_t old_use_fonts_in_book;
 static int8_t old_font;
 
+static void book_param_restore_menu();
+static void book_param_about();
+
 #if INKPLATE_6PLUS || TOUCH_TRIAL
   static constexpr int8_t BOOK_PARAMS_FORM_SIZE = 5;
 #else
@@ -130,6 +133,10 @@ revert_to_defaults()
                   "E-book parameters reverted", 
                   "E-book parameters reverted to default values.");
 
+  #if defined(BOARD_TYPE_PAPER_S3)
+    msg_viewer.auto_dismiss_in(5000, book_param_restore_menu);
+  #endif
+
   if (old_use_fonts_in_book != book_format_params->use_fonts_in_book) {
     if (book_format_params->use_fonts_in_book) {
       epub.load_fonts();
@@ -206,10 +213,30 @@ static MenuViewer::MenuEntry menu[10] = {
                                    "default values",                       revert_to_defaults           , true , true },  
   { MenuViewer::Icon::DELETE,      "Delete the current e-book",            delete_book                  , true , true },
   { MenuViewer::Icon::WIFI,        "WiFi Access to the e-books folder",    wifi_mode                    , true , true },
-  { MenuViewer::Icon::INFO,        "About the EPub-InkPlate application",  CommonActions::about         , true , true },
+  { MenuViewer::Icon::INFO,        "About the EPub-InkPlate application",  book_param_about             , true , true },
   { MenuViewer::Icon::POWEROFF,    "Power OFF (Deep Sleep)",               power_off                    , true , true },
   { MenuViewer::Icon::END_MENU,    nullptr,                                nullptr                      , false, true }
 }; 
+
+static void
+book_param_restore_menu()
+{
+  #if defined(BOARD_TYPE_PAPER_S3)
+    menu[1].visible = toc.is_ready() && !toc.is_empty();
+    menu_viewer.show(menu, 4, false);
+  #else
+    menu_viewer.show(menu);
+  #endif
+}
+
+static void
+book_param_about()
+{
+  CommonActions::about();
+  #if defined(BOARD_TYPE_PAPER_S3)
+    msg_viewer.auto_dismiss_in(5000, book_param_restore_menu);
+  #endif
+}
 
 void
 BookParamController::set_font_count(uint8_t count)
@@ -221,7 +248,11 @@ void
 BookParamController::enter()
 {
   menu[1].visible = toc.is_ready() && !toc.is_empty();
-  menu_viewer.show(menu);
+  #if defined(BOARD_TYPE_PAPER_S3)
+    menu_viewer.show(menu, 0, true);
+  #else
+    menu_viewer.show(menu);
+  #endif
   book_params_form_is_shown = false;
 }
 
@@ -263,7 +294,14 @@ BookParamController::input_event(const EventMgr::Event & event)
           fonts.adjust_default_font(font);
         }
      // }
-      menu_viewer.clear_highlight();
+
+      #if defined(BOARD_TYPE_PAPER_S3)
+        // FormViewer clears the screen on completion for Paper S3; redraw the menu.
+        menu[1].visible = toc.is_ready() && !toc.is_empty();
+        menu_viewer.show(menu, 3, false);
+      #else
+        menu_viewer.clear_highlight();
+      #endif
     }
   }
   else if (delete_current_book) {
@@ -311,6 +349,9 @@ BookParamController::input_event(const EventMgr::Event & event)
       else {
         msg_viewer.show(MsgViewer::MsgType::INFO, false, false, 
                         "Canceled", "The e-book was not deleted.");
+        #if defined(BOARD_TYPE_PAPER_S3)
+          msg_viewer.auto_dismiss_in(5000, book_param_restore_menu);
+        #endif
       }
       delete_current_book = false;
     }

@@ -218,6 +218,10 @@ void MenuViewer::show(MenuEntry * the_menu, uint8_t entry_index, bool clear_scre
   Font * caption_font = fonts.get(1);
   Font * icon_font    = fonts.get(0);
 
+  if (clear_screen) {
+    screen.force_full_update();
+  }
+
   if (caption_font == nullptr || icon_font == nullptr) {
     LOG_E("Internal error (Fonts not available!)");
     return;
@@ -399,7 +403,7 @@ void MenuViewer::show(MenuEntry * the_menu, uint8_t entry_index, bool clear_scre
   }
 
   ScreenBottom::show();
-  page.paint(true);
+  page.paint(false, !clear_screen);
   return;
 #endif
 
@@ -666,7 +670,7 @@ MenuViewer::clear_highlight()
       }
     }
 
-    page.paint(false);
+    page.paint(false, true);
     return;
 #endif
 
@@ -762,7 +766,7 @@ MenuViewer::event(const EventMgr::Event & event)
           if (!line2.empty()) page.put_str_at(line2, Pos(text_left, y1 + line_step), fmt);
         }
         hint_shown = true;
-        page.paint(false);
+        page.paint(false, true);
       }
       return false;
     }

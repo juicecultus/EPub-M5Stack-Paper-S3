@@ -51,6 +51,12 @@ class MatrixBooksDirViewer : public BooksDirViewer
     void setup();
     
     int16_t  show_page_and_highlight(int16_t book_idx);
+    bool                 is_book_visible(int16_t book_idx) {
+      if (current_page_nbr < 0 || books_per_page <= 0) return false;
+      const int16_t start = (int16_t)(current_page_nbr * books_per_page);
+      const int16_t end = (int16_t)(start + books_per_page);
+      return (book_idx >= start) && (book_idx < end);
+    }
     void              highlight_book(int16_t book_idx);
     void             clear_highlight();
 

@@ -1082,7 +1082,11 @@ class FormViewer
         ScreenBottom::show();
       #endif
 
-      page.paint(false);
+      #if defined(BOARD_TYPE_PAPER_S3)
+        page.paint(false, true);
+      #else
+        page.paint(false);
+      #endif
     }
 
     bool event(const EventMgr::Event & event) {
@@ -1100,6 +1104,9 @@ class FormViewer
           return false; // Not completed yet
         }
         else {
+          #if defined(BOARD_TYPE_PAPER_S3)
+            if (event.kind == EventMgr::EventKind::NONE) return false;
+          #endif
           switch (event.kind) {
             #if defined(BOARD_TYPE_PAPER_S3)
               case EventMgr::EventKind::SWIPE_LEFT:
@@ -1236,7 +1243,11 @@ class FormViewer
             Pos(20, TOP_YPOS));
         #endif
 
-        page.paint(false);
+        #if defined(BOARD_TYPE_PAPER_S3)
+          page.paint(false, true);
+        #else
+          page.paint(false);
+        #endif
       }
       else {
         if (highlighting_field) {
@@ -1263,7 +1274,11 @@ class FormViewer
           ScreenBottom::show();
         #endif
         
-        page.paint(false);
+        #if defined(BOARD_TYPE_PAPER_S3)
+          page.paint(false, true);
+        #else
+          page.paint(false);
+        #endif
       }
       
       return completed;

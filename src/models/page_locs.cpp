@@ -55,6 +55,9 @@ struct RetrieveQueueData {
   #define QUEUE_RECEIVE(q, m, t)  mq_receive(q,       (char *) &m, sizeof(m), nullptr)
 #else
   #include <esp_pthread.h>
+  #if defined(BOARD_TYPE_PAPER_S3)
+    #include <esp_heap_caps.h>
+  #endif
 
   static esp_pthread_cfg_t create_config(const char *name, int core_id, int stack, int prio)
   {
@@ -63,6 +66,9 @@ struct RetrieveQueueData {
       cfg.pin_to_core = core_id;
       cfg.stack_size = stack;
       cfg.prio = prio;
+      #if defined(BOARD_TYPE_PAPER_S3)
+        cfg.stack_alloc_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+      #endif
       return cfg;
   }
 

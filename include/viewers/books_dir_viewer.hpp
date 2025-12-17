@@ -14,6 +14,7 @@ class BooksDirViewer
     virtual void                        setup() = 0;
 
     virtual int16_t   show_page_and_highlight(int16_t book_idx) = 0;
+    virtual bool                 is_book_visible(int16_t book_idx) = 0;
     virtual void               highlight_book(int16_t book_idx) = 0;
     virtual void              clear_highlight() = 0;
 

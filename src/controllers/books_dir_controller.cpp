@@ -294,6 +294,19 @@ BooksDirController::leave(bool going_to_deep_sleep)
         books_dir_viewer->clear_highlight();
         break;
 
+      case EventMgr::EventKind::NONE:
+        #if defined(BOARD_TYPE_PAPER_S3)
+          {
+            int16_t updated_idx = -1;
+            if (books_dir.process_next_cover(updated_idx)) {
+              if ((updated_idx >= 0) && (books_dir_viewer != nullptr) && books_dir_viewer->is_book_visible(updated_idx)) {
+                current_book_index = books_dir_viewer->show_page_and_highlight(current_book_index);
+              }
+            }
+          }
+        #endif
+        break;
+
       default:
         break;
     }
@@ -372,6 +385,16 @@ BooksDirController::leave(bool going_to_deep_sleep)
         break;
         
       case EventMgr::EventKind::NONE:
+        #if defined(BOARD_TYPE_PAPER_S3)
+          {
+            int16_t updated_idx = -1;
+            if (books_dir.process_next_cover(updated_idx)) {
+              if ((updated_idx >= 0) && (books_dir_viewer != nullptr) && books_dir_viewer->is_book_visible(updated_idx)) {
+                current_book_index = books_dir_viewer->show_page_and_highlight(current_book_index);
+              }
+            }
+          }
+        #endif
         break;
     }
   }

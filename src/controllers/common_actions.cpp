@@ -126,6 +126,17 @@ CommonActions::render_sleep_screen()
       return false;
     }
 
+    #if defined(BOARD_TYPE_PAPER_S3)
+      uint8_t * bitmap = nullptr;
+      Dim dim(0, 0);
+      if (!books_dir.get_full_cover(id, &bitmap, dim) || bitmap == nullptr) {
+        return false;
+      }
+      const bool ok = draw_image_sharp(bitmap, dim);
+      free(bitmap);
+      return ok;
+    #endif
+
     const int16_t idx = books_dir.get_sorted_idx_from_id(id);
     if (idx < 0) {
       return false;
@@ -256,10 +267,17 @@ CommonActions::render_sleep_screen()
     ok = render_random_image();
   }
   if (!ok) {
-    ok = render_last_cover_high_quality();
-    if (!ok) {
+    #if defined(BOARD_TYPE_PAPER_S3)
       ok = render_last_cover_thumbnail();
-    }
+      if (!ok) {
+        ok = render_last_cover_high_quality();
+      }
+    #else
+      ok = render_last_cover_high_quality();
+      if (!ok) {
+        ok = render_last_cover_thumbnail();
+      }
+    #endif
   }
 
   if (!ok) {
