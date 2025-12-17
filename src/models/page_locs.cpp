@@ -482,28 +482,38 @@ PageLocs::setup()
 void
 PageLocs::abort_threads()
 {
-  RetrieveQueueData retrieve_queue_data;
-  retrieve_queue_data = {
-    .req           = RetrieveReq::ABORT,
-    .itemref_index = 0
-  };
-  LOG_D("abort_threads: Sending ABORT to Retriever");
-  QUEUE_SEND(retrieve_queue, retrieve_queue_data, 0);
+  #if defined(BOARD_TYPE_PAPER_S3)
+    // On Paper S3 we do not reboot after WiFi/NTP flows. Aborting the page-locs
+    // worker threads would make subsequent book operations hang, and calling
+    // join() on a non-joinable thread can throw std::system_error.
+    //
+    // Instead, request a clean STOP of the current document computation.
+    if (state_thread.joinable() && retriever_thread.joinable()) {
+      if (!state_task.retriever_is_iddle()) {
+        stop_document();
+      }
+    }
+  #else
+    RetrieveQueueData retrieve_queue_data;
+    retrieve_queue_data = {
+      .req           = RetrieveReq::ABORT,
+      .itemref_index = 0
+    };
+    LOG_D("abort_threads: Sending ABORT to Retriever");
+    QUEUE_SEND(retrieve_queue, retrieve_queue_data, 0);
 
-  retriever_thread.join();
-  retriever_thread.~thread();
-  
-  StateQueueData state_queue_data;
-  state_queue_data = {
-    .req           = StateReq::ABORT,
-    .itemref_index = 0,
-    .itemref_count = 0
-  };
-  LOG_D("abort_threads: Sending ABORT to State");
-  QUEUE_SEND(state_queue, state_queue_data, 0);
+    StateQueueData state_queue_data;
+    state_queue_data = {
+      .req           = StateReq::ABORT,
+      .itemref_index = 0,
+      .itemref_count = 0
+    };
+    LOG_D("abort_threads: Sending ABORT to State");
+    QUEUE_SEND(state_queue, state_queue_data, 0);
 
-  state_thread.join();
-  state_thread.~thread();
+    if (retriever_thread.joinable()) retriever_thread.join();
+    if (state_thread.joinable())     state_thread.join();
+  #endif
 }
 
 class PageLocsInterp : public HTMLInterpreter 

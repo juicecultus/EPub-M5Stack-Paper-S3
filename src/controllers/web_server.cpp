@@ -576,6 +576,8 @@ start_web_server()
   page_locs.abort_threads();
   epub.close_file();
 
+  bool started = false;
+
   msg_viewer.show(MsgViewer::MsgType::WIFI, false, true, 
     "Web Server Starting", 
     "The Web server is now establishing the connexion with the WiFi router. Please wait.");
@@ -592,6 +594,7 @@ start_web_server()
       msg_viewer.show(MsgViewer::MsgType::WIFI, true, true, 
         "Web Server", 
         "The Web server is now running at ip " IPSTR ". To stop it, please " MSG ".", IP2STR(&ip));
+      started = true;
     }
     else {
       msg_viewer.show(MsgViewer::MsgType::ALERT, true, true, 
@@ -607,7 +610,7 @@ start_web_server()
     wifi.stop();
   }
 
-  return true;
+  return started;
 }
 
 void

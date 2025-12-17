@@ -27,11 +27,81 @@
 
 #include <sys/stat.h>
 
+#include <cstdio>
+
 static int8_t show_images;
 static int8_t font_size;
 static int8_t use_fonts_in_book;
 static int8_t font;
 static int8_t done_res;
+
+#if EPUB_INKPLATE_BUILD && defined(BOARD_TYPE_PAPER_S3)
+  static bool wifi_setup_form_is_shown = false;
+  static bool wifi_setup_confirm_is_shown = false;
+
+  static bool stop_web_server_on_key = false;
+  static uint8_t return_menu_index_on_key = 0;
+
+  static char wifi_ssid_buf[32];
+  static char wifi_pwd_buf[32];
+  static int8_t wifi_done = 1;
+
+  #if INKPLATE_6PLUS || TOUCH_TRIAL
+    static constexpr int8_t WIFI_FORM_SIZE = 3;
+  #else
+    static constexpr int8_t WIFI_FORM_SIZE = 2;
+  #endif
+
+  static FormEntry wifi_setup_form_entries[WIFI_FORM_SIZE] = {
+    { .caption = "WiFi SSID:",
+      .u = { .str = { .value = wifi_ssid_buf, .max_len = (uint16_t)sizeof(wifi_ssid_buf), .password = false } },
+      .entry_type = FormEntryType::STRING },
+    { .caption = "WiFi Password:",
+      .u = { .str = { .value = wifi_pwd_buf,  .max_len = (uint16_t)sizeof(wifi_pwd_buf),  .password = true  } },
+      .entry_type = FormEntryType::STRING },
+    #if INKPLATE_6PLUS || TOUCH_TRIAL
+      { .caption = " DONE ",
+        .u = { .ch = { .value = &wifi_done, .choice_count = 0, .choices = nullptr } },
+        .entry_type = FormEntryType::DONE }
+    #endif
+  };
+
+  static bool
+  wifi_credentials_present()
+  {
+    std::string ssid;
+    config.get(Config::Ident::SSID, ssid);
+    if ((ssid == "NONE") || ssid.empty()) return false;
+    return true;
+  }
+
+  static void
+  wifi_load_buffers_from_config()
+  {
+    std::string ssid;
+    std::string pwd;
+
+    config.get(Config::Ident::SSID, ssid);
+    config.get(Config::Ident::PWD,  pwd);
+
+    if (ssid == "NONE") ssid.clear();
+    if (pwd  == "NONE") pwd.clear();
+
+    (void)snprintf(wifi_ssid_buf, sizeof(wifi_ssid_buf), "%s", ssid.c_str());
+    (void)snprintf(wifi_pwd_buf,  sizeof(wifi_pwd_buf),  "%s", pwd.c_str());
+  }
+
+  static void
+  wifi_show_setup_form(uint8_t return_menu_index)
+  {
+    return_menu_index_on_key = return_menu_index;
+    wifi_load_buffers_from_config();
+    wifi_done = 1;
+
+    form_viewer.show(wifi_setup_form_entries, WIFI_FORM_SIZE, nullptr);
+    wifi_setup_form_is_shown = true;
+  }
+#endif
 
 static int8_t old_font_size;
 static int8_t old_show_images;
@@ -100,7 +170,11 @@ book_parameters()
   form_viewer.show(
     book_params_form_entries, 
     BOOK_PARAMS_FORM_SIZE, 
-    "(Any item change will trigger book refresh)");
+    #if defined(BOARD_TYPE_PAPER_S3)
+      nullptr);
+    #else
+      "(Any item change will trigger book refresh)");
+    #endif
 
   book_param_controller.set_book_params_form_is_shown();
 }
@@ -175,21 +249,28 @@ toc_ctrl()
 }
 
 extern bool start_web_server();
-extern bool  stop_web_server();
+extern void stop_web_server();
 
 static void
 wifi_mode()
 {
   #if EPUB_INKPLATE_BUILD
+    #if defined(BOARD_TYPE_PAPER_S3)
+      if (!wifi_credentials_present()) {
+        wifi_show_setup_form(6);
+        return;
+      }
+    #endif
+
     epub.close_file();
     fonts.clear(true);
     fonts.clear_glyph_caches();
     
     event_mgr.set_stay_on(true); // DO NOT sleep
 
-    if (start_web_server()) {
-      book_param_controller.set_wait_for_key_after_wifi();
-    }
+    stop_web_server_on_key = start_web_server();
+    return_menu_index_on_key = 6;
+    book_param_controller.set_wait_for_key_after_wifi();
   #endif
 }
 
@@ -265,6 +346,49 @@ BookParamController::leave(bool going_to_deep_sleep)
 void 
 BookParamController::input_event(const EventMgr::Event & event)
 {
+  #if EPUB_INKPLATE_BUILD && defined(BOARD_TYPE_PAPER_S3)
+    if (wifi_setup_form_is_shown) {
+      if (form_viewer.event(event)) {
+        wifi_setup_form_is_shown = false;
+        msg_viewer.show(MsgViewer::MsgType::CONFIRM, true, true,
+                        "Save WiFi Credentials",
+                        "Save these WiFi credentials and continue?");
+        wifi_setup_confirm_is_shown = true;
+      }
+      return;
+    }
+    else if (wifi_setup_confirm_is_shown) {
+      bool ok;
+      if (msg_viewer.confirm(event, ok)) {
+        wifi_setup_confirm_is_shown = false;
+
+        if (!ok) {
+          #if defined(BOARD_TYPE_PAPER_S3)
+            menu[1].visible = toc.is_ready() && !toc.is_empty();
+            menu_viewer.show(menu, return_menu_index_on_key, false);
+          #else
+            menu_viewer.show(menu);
+          #endif
+          return;
+        }
+
+        if (wifi_ssid_buf[0] == 0) {
+          wifi_show_setup_form(return_menu_index_on_key);
+          return;
+        }
+
+        std::string ssid = wifi_ssid_buf;
+        std::string pwd  = wifi_pwd_buf;
+        config.put(Config::Ident::SSID, ssid);
+        config.put(Config::Ident::PWD,  pwd );
+        config.save(true);
+
+        wifi_mode();
+      }
+      return;
+    }
+  #endif
+
   if (book_params_form_is_shown) {
     if (form_viewer.event(event)) {
       book_params_form_is_shown = false;
@@ -358,13 +482,29 @@ BookParamController::input_event(const EventMgr::Event & event)
   }
   #if EPUB_INKPLATE_BUILD
     else if (wait_for_key_after_wifi) {
-      msg_viewer.show(MsgViewer::MsgType::INFO, 
-                      false, true, 
-                      "Restarting", 
-                      "The device is now restarting. Please wait.");
       wait_for_key_after_wifi = false;
-      stop_web_server();
-      esp_restart();
+
+      #if defined(BOARD_TYPE_PAPER_S3)
+        if (stop_web_server_on_key) {
+          stop_web_server();
+          stop_web_server_on_key = false;
+        }
+        event_mgr.set_stay_on(false);
+      #else
+        msg_viewer.show(MsgViewer::MsgType::INFO, 
+                        false, true, 
+                        "Restarting", 
+                        "The device is now restarting. Please wait.");
+        stop_web_server();
+        event_mgr.set_stay_on(false);
+      #endif
+
+      #if defined(BOARD_TYPE_PAPER_S3)
+        menu[1].visible = toc.is_ready() && !toc.is_empty();
+        menu_viewer.show(menu, return_menu_index_on_key, false);
+      #else
+        esp_restart();
+      #endif
     }
   #endif
   else {

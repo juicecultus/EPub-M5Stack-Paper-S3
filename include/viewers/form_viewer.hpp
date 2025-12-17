@@ -9,6 +9,7 @@
 #include "models/fonts.hpp"
 #include "viewers/page.hpp"
 #include "viewers/keypad_viewer.hpp"
+#include "viewers/keyboard_viewer.hpp"
 #include "viewers/screen_bottom.hpp"
 #include "memory_pool.hpp"
 
@@ -16,19 +17,23 @@
 
 #include <vector>
 
- #include <cstdio>
- #include <cstring>
+#include <cstdio>
+#include <cstring>
 
-enum class FormEntryType { HORIZONTAL, VERTICAL, UINT16
+enum class FormEntryType { HORIZONTAL, VERTICAL, UINT16, STRING
+  #if defined(BOARD_TYPE_PAPER_S3)
+    , UINT16_3
+  #endif
   #if INKPLATE_6PLUS || TOUCH_TRIAL
     , DONE
   #endif
 };
 
 #if defined(BOARD_TYPE_PAPER_S3)
-constexpr  uint8_t FORM_FONT_SIZE = 18;
+constexpr  uint8_t FORM_FONT_SIZE = 14;
 constexpr  uint8_t FORM_LABEL_FONT_SIZE = 8;
-constexpr  uint8_t FORM_VALUE_FONT_SIZE = 12;
+constexpr  uint8_t FORM_VALUE_FONT_SIZE = 10;
+constexpr  uint8_t FORM_NOTE_FONT_SIZE = 6;
 #else
 constexpr  uint8_t FORM_FONT_SIZE = 9;
 #endif
@@ -51,6 +56,30 @@ struct FormEntry {
       uint16_t   min;
       uint16_t   max;
     } val;
+    struct {
+      char     * value;
+      uint16_t   max_len;
+      bool       password;
+    } str;
+
+    #if defined(BOARD_TYPE_PAPER_S3)
+      struct {
+        uint16_t   * value0;
+        uint16_t     min0;
+        uint16_t     max0;
+        const char * label0;
+
+        uint16_t   * value1;
+        uint16_t     min1;
+        uint16_t     max1;
+        const char * label1;
+
+        uint16_t   * value2;
+        uint16_t     min2;
+        uint16_t     max2;
+        const char * label2;
+      } val3;
+    #endif
   } u;
   FormEntryType      entry_type;
 };
@@ -205,7 +234,8 @@ class FormChoiceField : public FormField
       { "3Bits",      1 }
     };
 
-    static constexpr FormChoice timeout_choices[3] = {
+    static constexpr FormChoice timeout_choices[4] = {
+      { "1",          1 },
       { "5",          5 },
       { "15",        15 },
       { "30",        30 }
@@ -478,7 +508,7 @@ class PaperS3ArrowChoiceField : public FormChoiceField
       selector_pos = Pos((int16_t)(field_pos.x + PAPER_PAD_X), selector_y);
       selector_dim = Dim((int16_t)(field_dim.width - (PAPER_PAD_X * 2)), SELECTOR_H);
 
-      arrow_dim = Dim(SELECTOR_H, SELECTOR_H);
+      arrow_dim = Dim(ARROW_W, SELECTOR_H);
       left_arrow_pos  = selector_pos;
       right_arrow_pos = Pos((int16_t)(selector_pos.x + selector_dim.width - arrow_dim.width), selector_pos.y);
 
@@ -499,9 +529,57 @@ class PaperS3ArrowChoiceField : public FormChoiceField
 
       page.put_rounded(field_dim, field_pos);
       const int16_t max_label_w = (int16_t)(field_dim.width - (PAPER_PAD_X * 2));
-      char label_buf[96];
-      const char * label = FormField::fit_text_ellipsis(font, form_entry.caption, label_buf, sizeof(label_buf), max_label_w, FORM_LABEL_FONT_SIZE);
-      page.put_str_at(label, Pos((int16_t)(field_pos.x + PAPER_PAD_X), (int16_t)(field_pos.y + PAPER_PAD_Y + offset)), label_fmt);
+      const int16_t label_x = (int16_t)(field_pos.x + PAPER_PAD_X);
+      const int16_t label_y = (int16_t)(field_pos.y + PAPER_PAD_Y + offset);
+
+      const char * caption = form_entry.caption;
+      const char * lp = (caption != nullptr) ? strchr(caption, '(') : nullptr;
+      const char * rp = (lp != nullptr) ? strchr(lp, ')') : nullptr;
+
+      if ((lp != nullptr) && (rp != nullptr) && (rp > lp)) {
+        char base_buf[96];
+        char base_fit_buf[96];
+        char note_buf[96];
+
+        size_t base_n = (size_t)(lp - caption);
+        if (base_n >= sizeof(base_buf)) base_n = sizeof(base_buf) - 1;
+        memcpy(base_buf, caption, base_n);
+        base_buf[base_n] = 0;
+        while ((base_n > 0) && (base_buf[base_n - 1] == ' ')) {
+          base_buf[base_n - 1] = 0;
+          base_n--;
+        }
+
+        const char * note_src = lp;
+        Dim note_dim;
+        font.get_size(note_src, &note_dim, FORM_NOTE_FONT_SIZE);
+        const int16_t gap = 4;
+        const int16_t note_max_w = (int16_t)((note_dim.width > (max_label_w >> 1)) ? (max_label_w >> 1) : note_dim.width);
+        const int16_t base_max_w = (int16_t)(max_label_w - note_max_w - gap);
+
+        const char * base = base_buf;
+        if (base_max_w > 20) {
+          base = FormField::fit_text_ellipsis(font, base_buf, base_fit_buf, sizeof(base_fit_buf), base_max_w, FORM_LABEL_FONT_SIZE);
+        }
+
+        Dim base_dim;
+        font.get_size(base, &base_dim, FORM_LABEL_FONT_SIZE);
+        page.put_str_at(base, Pos(label_x, label_y), label_fmt);
+
+        Page::Format note_fmt = fmt;
+        note_fmt.font_size = FORM_NOTE_FONT_SIZE;
+        const int16_t note_x = (int16_t)(label_x + base_dim.width + gap);
+        const int16_t note_w_avail = (int16_t)(max_label_w - base_dim.width - gap);
+        if (note_w_avail > 10) {
+          const char * note = FormField::fit_text_ellipsis(font, note_src, note_buf, sizeof(note_buf), note_w_avail, FORM_NOTE_FONT_SIZE);
+          page.put_str_at(note, Pos(note_x, label_y), note_fmt);
+        }
+      }
+      else {
+        char label_buf[96];
+        const char * label = FormField::fit_text_ellipsis(font, form_entry.caption, label_buf, sizeof(label_buf), max_label_w, FORM_LABEL_FONT_SIZE);
+        page.put_str_at(label, Pos(label_x, label_y), label_fmt);
+      }
 
       page.put_rounded(selector_dim, selector_pos);
       page.put_rounded(arrow_dim, left_arrow_pos);
@@ -509,10 +587,12 @@ class PaperS3ArrowChoiceField : public FormChoiceField
       page.put_rounded(value_dim, value_pos);
 
       Dim d;
-      font.get_size("<", &d, FORM_VALUE_FONT_SIZE);
-      page.put_str_at("<", Pos((int16_t)(left_arrow_pos.x + (arrow_dim.width >> 1) - (d.width >> 1)), (int16_t)(left_arrow_pos.y + (arrow_dim.height >> 1) + (d.height >> 1))), value_fmt);
-      font.get_size(">", &d, FORM_VALUE_FONT_SIZE);
-      page.put_str_at(">", Pos((int16_t)(right_arrow_pos.x + (arrow_dim.width >> 1) - (d.width >> 1)), (int16_t)(right_arrow_pos.y + (arrow_dim.height >> 1) + (d.height >> 1))), value_fmt);
+      font.get_size("<", &d, ARROW_FONT_SIZE);
+      Page::Format arrow_fmt = value_fmt;
+      arrow_fmt.font_size = ARROW_FONT_SIZE;
+      page.put_str_at("<", Pos((int16_t)(left_arrow_pos.x + (arrow_dim.width >> 1) - (d.width >> 1)), (int16_t)(left_arrow_pos.y + (arrow_dim.height >> 1) + (d.height >> 1))), arrow_fmt);
+      font.get_size(">", &d, ARROW_FONT_SIZE);
+      page.put_str_at(">", Pos((int16_t)(right_arrow_pos.x + (arrow_dim.width >> 1) - (d.width >> 1)), (int16_t)(right_arrow_pos.y + (arrow_dim.height >> 1) + (d.height >> 1))), arrow_fmt);
 
       const char * value = form_entry.u.ch.choices[(*current_item)->idx].caption;
       const int16_t max_value_w = (int16_t)(value_dim.width - 10);
@@ -527,24 +607,50 @@ class PaperS3ArrowChoiceField : public FormChoiceField
 
       changed = false;
 
-      if ((event.x >= left_arrow_pos.x) && (event.y >= left_arrow_pos.y) &&
-          (event.x <= (uint16_t)(left_arrow_pos.x + arrow_dim.width)) && (event.y <= (uint16_t)(left_arrow_pos.y + arrow_dim.height))) {
+      const int32_t ex = (int32_t)event.x;
+      const int32_t ey = (int32_t)event.y;
+
+      const int32_t l_x0 = (int32_t)left_arrow_pos.x - ARROW_HIT_PAD_X;
+      const int32_t l_y0 = (int32_t)left_arrow_pos.y - ARROW_HIT_PAD_Y;
+      const int32_t l_x1 = (int32_t)left_arrow_pos.x + (int32_t)arrow_dim.width + ARROW_HIT_PAD_X;
+      const int32_t l_y1 = (int32_t)left_arrow_pos.y + (int32_t)arrow_dim.height + ARROW_HIT_PAD_Y;
+
+      const int32_t r_x0 = (int32_t)right_arrow_pos.x - ARROW_HIT_PAD_X;
+      const int32_t r_y0 = (int32_t)right_arrow_pos.y - ARROW_HIT_PAD_Y;
+      const int32_t r_x1 = (int32_t)right_arrow_pos.x + (int32_t)arrow_dim.width + ARROW_HIT_PAD_X;
+      const int32_t r_y1 = (int32_t)right_arrow_pos.y + (int32_t)arrow_dim.height + ARROW_HIT_PAD_Y;
+
+      const int32_t v_x0 = (int32_t)value_pos.x;
+      const int32_t v_y0 = (int32_t)value_pos.y;
+      const int32_t v_x1 = (int32_t)value_pos.x + (int32_t)value_dim.width;
+      const int32_t v_y1 = (int32_t)value_pos.y + (int32_t)value_dim.height;
+
+      if ((ex >= l_x0) && (ey >= l_y0) && (ex <= l_x1) && (ey <= l_y1)) {
         if (current_item == items.begin()) current_item = items.end();
         current_item--;
         changed = true;
       }
-      else if ((event.x >= right_arrow_pos.x) && (event.y >= right_arrow_pos.y) &&
-               (event.x <= (uint16_t)(right_arrow_pos.x + arrow_dim.width)) && (event.y <= (uint16_t)(right_arrow_pos.y + arrow_dim.height))) {
+      else if ((ex >= r_x0) && (ey >= r_y0) && (ex <= r_x1) && (ey <= r_y1)) {
         current_item++;
         if (current_item == items.end()) current_item = items.begin();
+        changed = true;
+      }
+      else if ((ex >= v_x0) && (ey >= v_y0) && (ex <= v_x1) && (ey <= v_y1)) {
+        const int32_t mid = (v_x0 + v_x1) >> 1;
+        if (ex < mid) {
+          if (current_item == items.begin()) current_item = items.end();
+          current_item--;
+        }
+        else {
+          current_item++;
+          if (current_item == items.end()) current_item = items.begin();
+        }
         changed = true;
       }
       return false;
     }
 
     void update_highlight() override {
-      page.put_rounded(Dim((int16_t)(value_dim.width + 4), (int16_t)(value_dim.height + 4)), Pos((int16_t)(value_pos.x - 2), (int16_t)(value_pos.y - 2)));
-      page.put_rounded(Dim((int16_t)(value_dim.width + 6), (int16_t)(value_dim.height + 6)), Pos((int16_t)(value_pos.x - 3), (int16_t)(value_pos.y - 3)));
     }
 
     void save_value() override {
@@ -554,8 +660,12 @@ class PaperS3ArrowChoiceField : public FormChoiceField
   private:
     static constexpr int16_t PAPER_MARGIN_X = 24;
     static constexpr int16_t PAPER_PAD_X = 14;
-    static constexpr int16_t PAPER_PAD_Y = 5;
-    static constexpr int16_t SELECTOR_H = 38;
+    static constexpr int16_t PAPER_PAD_Y = 8;
+    static constexpr int16_t SELECTOR_H = 52;
+    static constexpr int16_t ARROW_W = 64;
+    static constexpr uint8_t ARROW_FONT_SIZE = 18;
+    static constexpr int16_t ARROW_HIT_PAD_X = 10;
+    static constexpr int16_t ARROW_HIT_PAD_Y = 8;
 
     Pos selector_pos;
     Dim selector_dim;
@@ -613,11 +723,57 @@ class FormUInt16 : public FormField
         int16_t label_offset = 0;
         if (label_glyph != nullptr) label_offset = -label_glyph->yoff;
         const int16_t max_label_w = (int16_t)(field_dim.width - (PAPER_PAD_X * 2));
-        char label_buf[96];
-        const char * label = FormField::fit_text_ellipsis(font, form_entry.caption, label_buf, sizeof(label_buf), max_label_w, FORM_LABEL_FONT_SIZE);
-        page.put_str_at(label,
-                        Pos((int16_t)(field_pos.x + PAPER_PAD_X), (int16_t)(field_pos.y + PAPER_PAD_Y + label_offset)),
-                        label_fmt);
+        const int16_t label_x = (int16_t)(field_pos.x + PAPER_PAD_X);
+        const int16_t label_y = (int16_t)(field_pos.y + PAPER_PAD_Y + label_offset);
+
+        const char * caption = form_entry.caption;
+        const char * lp = (caption != nullptr) ? strchr(caption, '(') : nullptr;
+        const char * rp = (lp != nullptr) ? strchr(lp, ')') : nullptr;
+
+        if ((lp != nullptr) && (rp != nullptr) && (rp > lp)) {
+          char base_buf[96];
+          char base_fit_buf[96];
+          char note_buf[96];
+
+          size_t base_n = (size_t)(lp - caption);
+          if (base_n >= sizeof(base_buf)) base_n = sizeof(base_buf) - 1;
+          memcpy(base_buf, caption, base_n);
+          base_buf[base_n] = 0;
+          while ((base_n > 0) && (base_buf[base_n - 1] == ' ')) {
+            base_buf[base_n - 1] = 0;
+            base_n--;
+          }
+
+          const char * note_src = lp;
+          Dim note_dim;
+          font.get_size(note_src, &note_dim, FORM_NOTE_FONT_SIZE);
+          const int16_t gap = 4;
+          const int16_t note_max_w = (int16_t)((note_dim.width > (max_label_w >> 1)) ? (max_label_w >> 1) : note_dim.width);
+          const int16_t base_max_w = (int16_t)(max_label_w - note_max_w - gap);
+
+          const char * base = base_buf;
+          if (base_max_w > 20) {
+            base = FormField::fit_text_ellipsis(font, base_buf, base_fit_buf, sizeof(base_fit_buf), base_max_w, FORM_LABEL_FONT_SIZE);
+          }
+
+          Dim base_dim;
+          font.get_size(base, &base_dim, FORM_LABEL_FONT_SIZE);
+          page.put_str_at(base, Pos(label_x, label_y), label_fmt);
+
+          Page::Format note_fmt = fmt;
+          note_fmt.font_size = FORM_NOTE_FONT_SIZE;
+          const int16_t note_x = (int16_t)(label_x + base_dim.width + gap);
+          const int16_t note_w_avail = (int16_t)(max_label_w - base_dim.width - gap);
+          if (note_w_avail > 10) {
+            const char * note = FormField::fit_text_ellipsis(font, note_src, note_buf, sizeof(note_buf), note_w_avail, FORM_NOTE_FONT_SIZE);
+            page.put_str_at(note, Pos(note_x, label_y), note_fmt);
+          }
+        }
+        else {
+          char label_buf[96];
+          const char * label = FormField::fit_text_ellipsis(font, form_entry.caption, label_buf, sizeof(label_buf), max_label_w, FORM_LABEL_FONT_SIZE);
+          page.put_str_at(label, Pos(label_x, label_y), label_fmt);
+        }
 
         page.put_rounded(box_dim, box_pos);
         Dim d;
@@ -686,15 +842,325 @@ class FormUInt16 : public FormField
   private:
     static constexpr int16_t PAPER_MARGIN_X = 24;
     static constexpr int16_t PAPER_PAD_X = 14;
-    static constexpr int16_t PAPER_PAD_Y = 5;
-    static constexpr int16_t BOX_H = 38;
+    static constexpr int16_t PAPER_PAD_Y = 8;
+    static constexpr int16_t BOX_H = 52;
 
     Pos box_pos;
     Dim box_dim;
   #endif
 };
 
-#if INKPLATE_6PLUS || TOUCH_TRIAL
+ #if defined(BOARD_TYPE_PAPER_S3)
+ class FormUInt16Triple : public FormField
+ {
+   public:
+     using FormField::FormField;
+
+     bool form_refresh_required() { return true; }
+
+     void compute_field_pos(Pos from_pos) {
+       field_pos = from_pos;
+
+       uint8_t label_h = font.get_line_height(FORM_LABEL_FONT_SIZE);
+       if (label_h < 10) label_h = 10;
+
+       const int16_t content_x = (int16_t)(field_pos.x + PAPER_PAD_X);
+       const int16_t content_w = (int16_t)(field_dim.width - (PAPER_PAD_X * 2));
+       const int16_t box_w = (int16_t)((content_w - (BOX_GAP_X * 2)) / 3);
+       box_dim = Dim(box_w, BOX_H);
+
+       const int16_t y = (int16_t)(field_pos.y + PAPER_PAD_Y + label_h + PAPER_PAD_Y);
+       box_pos[0] = Pos(content_x, y);
+       box_pos[1] = Pos((int16_t)(content_x + box_w + BOX_GAP_X), y);
+       box_pos[2] = Pos((int16_t)(content_x + (box_w * 2) + (BOX_GAP_X * 2)), y);
+     }
+
+     void paint(Page::Format & fmt) {
+       auto clamp = [](uint16_t v, uint16_t vmin, uint16_t vmax) -> uint16_t {
+         if (v < vmin) return vmin;
+         if (v > vmax) return vmax;
+         return v;
+       };
+
+       uint16_t v0 = clamp(*form_entry.u.val3.value0, form_entry.u.val3.min0, form_entry.u.val3.max0);
+       uint16_t v1 = clamp(*form_entry.u.val3.value1, form_entry.u.val3.min1, form_entry.u.val3.max1);
+       uint16_t v2 = clamp(*form_entry.u.val3.value2, form_entry.u.val3.min2, form_entry.u.val3.max2);
+       *form_entry.u.val3.value0 = v0;
+       *form_entry.u.val3.value1 = v1;
+       *form_entry.u.val3.value2 = v2;
+
+       page.put_rounded(field_dim, field_pos);
+
+       Page::Format label_fmt = fmt;
+       label_fmt.font_size = FORM_LABEL_FONT_SIZE;
+
+       Font::Glyph * label_glyph = font.get_glyph('M', FORM_LABEL_FONT_SIZE);
+       int16_t label_offset = 0;
+       if (label_glyph != nullptr) label_offset = -label_glyph->yoff;
+
+       const int16_t max_label_w = (int16_t)(field_dim.width - (PAPER_PAD_X * 2));
+       const int16_t label_x = (int16_t)(field_pos.x + PAPER_PAD_X);
+       const int16_t label_y = (int16_t)(field_pos.y + PAPER_PAD_Y + label_offset);
+
+       char label_buf[96];
+       const char * label = FormField::fit_text_ellipsis(font, form_entry.caption, label_buf, sizeof(label_buf), max_label_w, FORM_LABEL_FONT_SIZE);
+       page.put_str_at(label, Pos(label_x, label_y), label_fmt);
+
+       Page::Format sub_fmt = fmt;
+       sub_fmt.font_size = FORM_NOTE_FONT_SIZE;
+       sub_fmt.align = CSS::Align::LEFT;
+
+       Font::Glyph * sub_glyph = font.get_glyph('M', FORM_NOTE_FONT_SIZE);
+       int16_t sub_offset = 0;
+       if (sub_glyph != nullptr) sub_offset = -sub_glyph->yoff;
+
+       Page::Format value_fmt = fmt;
+       value_fmt.font_size = FORM_VALUE_FONT_SIZE;
+
+       uint16_t values[3] = { v0, v1, v2 };
+       const char * subs[3] = { form_entry.u.val3.label0, form_entry.u.val3.label1, form_entry.u.val3.label2 };
+
+       for (uint8_t i = 0; i < 3; i++) {
+         page.put_rounded(box_dim, box_pos[i]);
+
+         if (subs[i] != nullptr) {
+           page.put_str_at(subs[i],
+                           Pos((int16_t)(box_pos[i].x + 6), (int16_t)(box_pos[i].y + 6 + sub_offset)),
+                           sub_fmt);
+         }
+
+         char val_buf[8];
+         int_to_str(values[i], val_buf, 8);
+         Dim d;
+         font.get_size(val_buf, &d, FORM_VALUE_FONT_SIZE);
+         page.put_str_at(val_buf,
+                         Pos((int16_t)(box_pos[i].x + (box_dim.width >> 1) - (d.width >> 1)),
+                             (int16_t)(box_pos[i].y + (box_dim.height >> 1) + (d.height >> 1))),
+                         value_fmt);
+       }
+     }
+
+     bool event(const EventMgr::Event & event) {
+       if (!event_control) {
+         active_idx = 0;
+         for (uint8_t i = 0; i < 3; i++) {
+           if ((event.x >= box_pos[i].x) && (event.x <= (uint16_t)(box_pos[i].x + box_dim.width)) &&
+               (event.y >= box_pos[i].y) && (event.y <= (uint16_t)(box_pos[i].y + box_dim.height))) {
+             active_idx = i;
+             break;
+           }
+         }
+
+         uint16_t current;
+         uint16_t vmin;
+         uint16_t vmax;
+         const char * cap;
+
+         if (active_idx == 0) {
+           current = *form_entry.u.val3.value0;
+           vmin = form_entry.u.val3.min0;
+           vmax = form_entry.u.val3.max0;
+           cap = (form_entry.u.val3.label0 != nullptr) ? form_entry.u.val3.label0 : form_entry.caption;
+         }
+         else if (active_idx == 1) {
+           current = *form_entry.u.val3.value1;
+           vmin = form_entry.u.val3.min1;
+           vmax = form_entry.u.val3.max1;
+           cap = (form_entry.u.val3.label1 != nullptr) ? form_entry.u.val3.label1 : form_entry.caption;
+         }
+         else {
+           current = *form_entry.u.val3.value2;
+           vmin = form_entry.u.val3.min2;
+           vmax = form_entry.u.val3.max2;
+           cap = (form_entry.u.val3.label2 != nullptr) ? form_entry.u.val3.label2 : form_entry.caption;
+         }
+
+         if (current < vmin) current = vmin;
+         if (current > vmax) current = vmax;
+
+         keypad_viewer.show(current, cap);
+         event_control = true;
+         return true;
+       }
+       else {
+         if (!keypad_viewer.event(event)) {
+           uint16_t v = keypad_viewer.get_value();
+           if (active_idx == 0) {
+             if (v < form_entry.u.val3.min0) v = form_entry.u.val3.min0;
+             if (v > form_entry.u.val3.max0) v = form_entry.u.val3.max0;
+             *form_entry.u.val3.value0 = v;
+           }
+           else if (active_idx == 1) {
+             if (v < form_entry.u.val3.min1) v = form_entry.u.val3.min1;
+             if (v > form_entry.u.val3.max1) v = form_entry.u.val3.max1;
+             *form_entry.u.val3.value1 = v;
+           }
+           else {
+             if (v < form_entry.u.val3.min2) v = form_entry.u.val3.min2;
+             if (v > form_entry.u.val3.max2) v = form_entry.u.val3.max2;
+             *form_entry.u.val3.value2 = v;
+           }
+
+           event_control = false;
+           return false;
+         }
+       }
+       return true;
+     }
+
+     void update_highlight() {
+       for (uint8_t i = 0; i < 3; i++) {
+         page.put_rounded(Dim((int16_t)(box_dim.width + 4), (int16_t)(box_dim.height + 4)),
+                          Pos((int16_t)(box_pos[i].x - 2), (int16_t)(box_pos[i].y - 2)));
+       }
+     }
+
+     void save_value() {
+     }
+
+     void compute_field_dim() {
+       const int16_t w = (int16_t)(Screen::get_width() - (PAPER_MARGIN_X * 2));
+       uint8_t label_h = font.get_line_height(FORM_LABEL_FONT_SIZE);
+       if (label_h < 10) label_h = 10;
+       field_dim.width  = w;
+       field_dim.height = (int16_t)(PAPER_PAD_Y + label_h + PAPER_PAD_Y + BOX_H + PAPER_PAD_Y);
+     }
+
+   private:
+     static constexpr int16_t PAPER_MARGIN_X = 24;
+     static constexpr int16_t PAPER_PAD_X = 14;
+     static constexpr int16_t PAPER_PAD_Y = 8;
+
+     static constexpr int16_t BOX_H = 52;
+     static constexpr int16_t BOX_GAP_X = 10;
+
+     Dim box_dim;
+     Pos box_pos[3];
+     uint8_t active_idx = 0;
+ };
+ #endif
+
+ class FormString : public FormField
+ {
+ 
+   public:
+     using FormField::FormField;
+
+     bool form_refresh_required() { return true; }
+
+     void compute_field_pos(Pos from_pos) {
+       field_pos = from_pos;
+       #if defined(BOARD_TYPE_PAPER_S3)
+         uint8_t label_h = font.get_line_height(FORM_LABEL_FONT_SIZE);
+         if (label_h < 10) label_h = 10;
+         box_pos = Pos((int16_t)(field_pos.x + PAPER_PAD_X), (int16_t)(field_pos.y + PAPER_PAD_Y + label_h + PAPER_PAD_Y));
+       #endif
+     }
+
+     void paint(Page::Format & fmt) {
+       char masked[64];
+       const char * shown = (form_entry.u.str.value != nullptr) ? form_entry.u.str.value : "";
+       if (form_entry.u.str.password) {
+         size_t n = strlen(shown);
+         if (n > (sizeof(masked) - 1)) n = sizeof(masked) - 1;
+         for (size_t i = 0; i < n; i++) masked[i] = '*';
+         masked[n] = 0;
+         shown = masked;
+       }
+
+       #if defined(BOARD_TYPE_PAPER_S3)
+         page.put_rounded(field_dim, field_pos);
+         Page::Format label_fmt = fmt;
+         label_fmt.font_size = FORM_LABEL_FONT_SIZE;
+         Font::Glyph * label_glyph = font.get_glyph('M', FORM_LABEL_FONT_SIZE);
+         int16_t label_offset = 0;
+         if (label_glyph != nullptr) label_offset = -label_glyph->yoff;
+         const int16_t max_label_w = (int16_t)(field_dim.width - (PAPER_PAD_X * 2));
+         const int16_t label_x = (int16_t)(field_pos.x + PAPER_PAD_X);
+         const int16_t label_y = (int16_t)(field_pos.y + PAPER_PAD_Y + label_offset);
+
+         char label_buf[96];
+         const char * label = FormField::fit_text_ellipsis(font, form_entry.caption, label_buf, sizeof(label_buf), max_label_w, FORM_LABEL_FONT_SIZE);
+         page.put_str_at(label, Pos(label_x, label_y), label_fmt);
+
+         page.put_rounded(box_dim, box_pos);
+         Page::Format value_fmt = fmt;
+         value_fmt.font_size = FORM_VALUE_FONT_SIZE;
+
+         const int16_t max_val_w = (int16_t)(box_dim.width - 12);
+         char val_buf[96];
+         const char * val_fit = FormField::fit_text_ellipsis(font, shown, val_buf, sizeof(val_buf), max_val_w, FORM_VALUE_FONT_SIZE);
+         Dim d;
+         font.get_size(val_fit, &d, FORM_VALUE_FONT_SIZE);
+         page.put_str_at(val_fit,
+                         Pos((int16_t)(box_pos.x + 6), (int16_t)(box_pos.y + (box_dim.height >> 1) + (d.height >> 1))),
+                         value_fmt);
+       #else
+         Font::Glyph * glyph  =  font.get_glyph('M', FORM_FONT_SIZE);
+         uint8_t       offset = -glyph->yoff;
+         page.put_str_at(form_entry.caption,
+                         Pos(caption_pos.x, caption_pos.y + offset),
+                         fmt);
+         page.put_str_at(shown,
+                         Pos(field_pos.x, field_pos.y + offset),
+                         fmt);
+       #endif
+     }
+
+     bool event(const EventMgr::Event & event) {
+       #if INKPLATE_6PLUS || TOUCH_TRIAL
+         if (!event_control) {
+           keyboard_viewer.show(form_entry.u.str.value, form_entry.u.str.max_len, form_entry.caption, form_entry.u.str.password);
+           event_control = true;
+         }
+         else {
+           if (!keyboard_viewer.event(event)) {
+             event_control = false;
+             return false;
+           }
+         }
+         return true;
+       #else
+         (void)event;
+         return false;
+       #endif
+     }
+
+     void update_highlight() {
+       #if defined(BOARD_TYPE_PAPER_S3)
+         page.put_rounded(Dim((int16_t)(box_dim.width + 4), (int16_t)(box_dim.height + 4)), Pos((int16_t)(box_pos.x - 2), (int16_t)(box_pos.y - 2)));
+       #endif
+     }
+
+     void save_value() {
+     }
+
+     void compute_field_dim() {
+       #if defined(BOARD_TYPE_PAPER_S3)
+         const int16_t w = (int16_t)(Screen::get_width() - (PAPER_MARGIN_X * 2));
+         uint8_t label_h = font.get_line_height(FORM_LABEL_FONT_SIZE);
+         if (label_h < 10) label_h = 10;
+         field_dim.width  = w;
+         field_dim.height = (int16_t)(PAPER_PAD_Y + label_h + PAPER_PAD_Y + BOX_H + PAPER_PAD_Y);
+         box_dim = Dim((int16_t)(field_dim.width - (PAPER_PAD_X * 2)), BOX_H);
+       #else
+         font.get_size("XXXXXXXXXX", &field_dim, FORM_FONT_SIZE);
+       #endif
+     }
+
+   #if defined(BOARD_TYPE_PAPER_S3)
+   private:
+     static constexpr int16_t PAPER_MARGIN_X = 24;
+     static constexpr int16_t PAPER_PAD_X = 14;
+     static constexpr int16_t PAPER_PAD_Y = 8;
+     static constexpr int16_t BOX_H = 52;
+
+     Pos box_pos;
+     Dim box_dim;
+   #endif
+ };
+
+ #if INKPLATE_6PLUS || TOUCH_TRIAL
 class FormDone : public FormField
 {
   public:
@@ -792,6 +1258,12 @@ class FieldFactory
           #endif
         case FormEntryType::UINT16:
           return new FormUInt16(entry, font);
+        case FormEntryType::STRING:
+          return new FormString(entry, font);
+        #if defined(BOARD_TYPE_PAPER_S3)
+          case FormEntryType::UINT16_3:
+            return new FormUInt16Triple(entry, font);
+        #endif
       #if INKPLATE_6PLUS || TOUCH_TRIAL
         case FormEntryType::DONE:
           return new FormDone(entry, font);
@@ -915,22 +1387,19 @@ class FormViewer
 
       #if defined(BOARD_TYPE_PAPER_S3)
         Font * font = fonts.get(1);
-        int16_t msg_line_h = 14;
-        if (font != nullptr) {
-          msg_line_h = (int16_t)font->get_line_height(FORM_LABEL_FONT_SIZE);
-          if (msg_line_h <= 0) msg_line_h = 14;
-        }
+        (void)font;
 
-        bottom_msg_pos = Pos(24, (int16_t)(Screen::get_height() - BOTTOM_YPOS - msg_line_h - 10));
-        const int16_t content_bottom = (int16_t)(bottom_msg_pos.y - 20);
+        static constexpr int16_t CONTENT_BOTTOM_PAD = 12;
+        const int16_t content_bottom = (int16_t)(Screen::get_height() - BOTTOM_YPOS - CONTENT_BOTTOM_PAD);
 
         if (!refresh) {
           page_index = 0;
         }
 
         static constexpr int16_t PAPER_MARGIN_X = 24;
-        static constexpr int16_t FIELD_GAP_Y = 8;
-        static constexpr int16_t START_Y = TOP_YPOS + 8;
+        static constexpr int16_t FIELD_GAP_Y = 12;
+        static constexpr int16_t DONE_GAP_Y = 16;
+        static constexpr int16_t START_Y = TOP_YPOS + 16;
         static constexpr int16_t CAPTION_INSET_X = 14;
         static constexpr int16_t CAPTION_INSET_Y = 10;
 
@@ -940,6 +1409,11 @@ class FormViewer
         int16_t current_ypos = START_Y;
         uint8_t idx = 0;
         for (auto * field : fields) {
+          #if INKPLATE_6PLUS || TOUCH_TRIAL
+            if ((idx < size) && (form_entries[idx].entry_type == FormEntryType::DONE)) {
+              current_ypos = (int16_t)(current_ypos + DONE_GAP_Y);
+            }
+          #endif
           const int16_t field_h = (int16_t)field->get_field_dim().height;
           if ((idx > 0) && (current_ypos != START_Y) && ((int16_t)(current_ypos + field_h) > content_bottom)) {
             page_starts.push_back(idx);
@@ -961,6 +1435,11 @@ class FormViewer
         idx = 0;
         for (auto * field : fields) {
           if ((idx >= start_idx_layout) && (idx < end_idx_layout)) {
+            #if INKPLATE_6PLUS || TOUCH_TRIAL
+              if ((idx < size) && (form_entries[idx].entry_type == FormEntryType::DONE)) {
+                current_ypos = (int16_t)(current_ypos + DONE_GAP_Y);
+              }
+            #endif
             const int16_t card_x = PAPER_MARGIN_X;
             field->compute_caption_pos(Pos((int16_t)(card_x + CAPTION_INSET_X + field->get_caption_dim().width), (int16_t)(current_ypos + CAPTION_INSET_Y)));
             field->compute_field_pos(Pos(card_x, current_ypos));
@@ -1032,29 +1511,18 @@ class FormViewer
           paint_idx++;
         }
 
-        Page::Format bottom_fmt = fmt;
-        bottom_fmt.font_size = FORM_LABEL_FONT_SIZE;
-
-        char pbuf[12];
-        int16_t reserved_right = 10;
         if (page_count > 1) {
-          snprintf(pbuf, sizeof(pbuf), "%u/%u", (unsigned)(page_index + 1), (unsigned)page_count);
+          char pbuf[12];
+          (void)snprintf(pbuf, sizeof(pbuf), "%u/%u", (unsigned)(page_index + 1), (unsigned)page_count);
           Font * font = fonts.get(1);
           if (font != nullptr) {
+            Page::Format page_fmt = fmt;
+            page_fmt.font_size = FORM_LABEL_FONT_SIZE;
             Dim dim;
             font->get_size(pbuf, &dim, FORM_LABEL_FONT_SIZE);
             const int16_t px = (int16_t)(Screen::get_width() - 24 - dim.width);
-            reserved_right = (int16_t)(dim.width + 24 + 10);
-            page.put_str_at(pbuf, Pos(px, bottom_msg_pos.y), bottom_fmt);
+            page.put_str_at(pbuf, Pos(px, 6), page_fmt);
           }
-        }
-
-        const int16_t max_bottom_w = (int16_t)(Screen::get_width() - bottom_msg_pos.x - reserved_right);
-        Font * bottom_font = fonts.get(1);
-        if (bottom_font != nullptr) {
-          char bottom_buf[160];
-          const char * bottom_str = FormField::fit_text_ellipsis(*bottom_font, bottom_msg, bottom_buf, sizeof(bottom_buf), max_bottom_w, FORM_LABEL_FONT_SIZE);
-          page.put_str_at(bottom_str, bottom_msg_pos, bottom_fmt);
         }
       #else
         for (auto * field : fields) {
@@ -1083,10 +1551,12 @@ class FormViewer
       #endif
 
       #if defined(BOARD_TYPE_PAPER_S3)
-        page.paint(false, true);
-      #else
-        page.paint(false);
+        if (!refresh) {
+          screen.force_full_update();
+        }
       #endif
+
+      page.paint(false);
     }
 
     bool event(const EventMgr::Event & event) {
@@ -1112,12 +1582,14 @@ class FormViewer
               case EventMgr::EventKind::SWIPE_LEFT:
                 if (page_count > 1) {
                   page_index = (uint8_t)((page_index + 1) % page_count);
+                  screen.force_full_update();
                   show(form_entries, size, bottom_msg, true);
                 }
                 return false;
               case EventMgr::EventKind::SWIPE_RIGHT:
                 if (page_count > 1) {
                   page_index = (uint8_t)((page_index == 0) ? (page_count - 1) : (page_index - 1));
+                  screen.force_full_update();
                   show(form_entries, size, bottom_msg, true);
                 }
                 return false;
@@ -1244,10 +1716,10 @@ class FormViewer
         #endif
 
         #if defined(BOARD_TYPE_PAPER_S3)
-          page.paint(false, true);
-        #else
-          page.paint(false);
+          screen.force_full_update();
         #endif
+
+        page.paint(false);
       }
       else {
         if (highlighting_field) {
@@ -1274,11 +1746,7 @@ class FormViewer
           ScreenBottom::show();
         #endif
         
-        #if defined(BOARD_TYPE_PAPER_S3)
-          page.paint(false, true);
-        #else
-          page.paint(false);
-        #endif
+        page.paint(false);
       }
       
       return completed;

@@ -97,8 +97,7 @@ ScreenBottom::show(int16_t page_nbr, int16_t page_count)
       localtime_r(&epoch, &time);
 
       ostr.str(std::string());
-      ostr << dw[(int8_t) time.tm_wday] << " - "
-           << std::setfill('0') 
+      ostr << std::setfill('0') 
            << std::setw(2) << +(time.tm_mon + 1)  << '/' 
            << std::setw(2) << +time.tm_mday << ' '
            << std::setw(2) << +time.tm_hour << ':' 

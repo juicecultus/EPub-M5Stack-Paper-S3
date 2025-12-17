@@ -18,6 +18,8 @@
 #include "models/epub.hpp"
 #include "models/nvs_mgr.hpp"
 
+#include <cstring>
+
 #if EPUB_INKPLATE_BUILD
   #include "esp_system.h"
 #endif
@@ -25,7 +27,9 @@
 // static int8_t boolean_value;
 
 static Screen::Orientation     orientation;
-static Screen::PixelResolution  resolution;
+ #if !defined(BOARD_TYPE_PAPER_S3)
+ static Screen::PixelResolution  resolution;
+ #endif
 
 static int8_t show_battery;
 static int8_t timeout;
@@ -38,8 +42,82 @@ static int8_t show_title;
 static int8_t dir_view;
 static int8_t done;
 
+#if EPUB_INKPLATE_BUILD && defined(BOARD_TYPE_PAPER_S3)
+  enum class WifiPendingAction : uint8_t { NONE, WEB_SERVER, NTP };
+
+  static WifiPendingAction wifi_pending_action = WifiPendingAction::NONE;
+  static bool wifi_setup_form_is_shown = false;
+  static bool wifi_setup_confirm_is_shown = false;
+
+  static bool stop_web_server_on_key = false;
+  static uint8_t return_menu_index_on_key = 0;
+
+  static char wifi_ssid_buf[32];
+  static char wifi_pwd_buf[32];
+  static int8_t wifi_done = 1;
+
+  #if INKPLATE_6PLUS || TOUCH_TRIAL
+    static constexpr int8_t WIFI_FORM_SIZE = 3;
+  #else
+    static constexpr int8_t WIFI_FORM_SIZE = 2;
+  #endif
+
+  static FormEntry wifi_setup_form_entries[WIFI_FORM_SIZE] = {
+    { .caption = "WiFi SSID:",
+      .u = { .str = { .value = wifi_ssid_buf, .max_len = (uint16_t)sizeof(wifi_ssid_buf), .password = false } },
+      .entry_type = FormEntryType::STRING },
+    { .caption = "WiFi Password:",
+      .u = { .str = { .value = wifi_pwd_buf,  .max_len = (uint16_t)sizeof(wifi_pwd_buf),  .password = true  } },
+      .entry_type = FormEntryType::STRING },
+    #if INKPLATE_6PLUS || TOUCH_TRIAL
+      { .caption = " DONE ",
+        .u = { .ch = { .value = &wifi_done, .choice_count = 0, .choices = nullptr } },
+        .entry_type = FormEntryType::DONE }
+    #endif
+  };
+
+  static bool
+  wifi_credentials_present()
+  {
+    std::string ssid;
+    config.get(Config::Ident::SSID, ssid);
+    if ((ssid == "NONE") || ssid.empty()) return false;
+    return true;
+  }
+
+  static void
+  wifi_load_buffers_from_config()
+  {
+    std::string ssid;
+    std::string pwd;
+
+    config.get(Config::Ident::SSID, ssid);
+    config.get(Config::Ident::PWD,  pwd);
+
+    if (ssid == "NONE") ssid.clear();
+    if (pwd  == "NONE") pwd.clear();
+
+    (void)snprintf(wifi_ssid_buf, sizeof(wifi_ssid_buf), "%s", ssid.c_str());
+    (void)snprintf(wifi_pwd_buf,  sizeof(wifi_pwd_buf),  "%s", pwd.c_str());
+  }
+
+  static void
+  wifi_show_setup_form(WifiPendingAction action, uint8_t return_menu_index)
+  {
+    wifi_pending_action = action;
+    return_menu_index_on_key = return_menu_index;
+    wifi_load_buffers_from_config();
+    wifi_done = 1;
+
+    form_viewer.show(wifi_setup_form_entries, WIFI_FORM_SIZE, nullptr);
+    wifi_setup_form_is_shown = true;
+  }
+#endif
+
 static Screen::Orientation     old_orientation;
-static Screen::PixelResolution  old_resolution;
+ #if !defined(BOARD_TYPE_PAPER_S3)
+ static Screen::PixelResolution  old_resolution;
+ #endif
 static int8_t old_show_images;
 static int8_t old_font_size;
 static int8_t old_use_fonts_in_books;
@@ -67,19 +145,31 @@ static int8_t old_sleep_screen;
 #endif
 
 static FormEntry main_params_form_entries[MAIN_FORM_SIZE] = {
-  { .caption = "Minutes Before Sleeping :",  .u = { .ch = { .value = &timeout,                .choice_count = 3, .choices = FormChoiceField::timeout_choices        } }, .entry_type = FormEntryType::HORIZONTAL  },
+  { .caption = "Minutes Before Sleeping :",  .u = { .ch = { .value = &timeout,                .choice_count = 4, .choices = FormChoiceField::timeout_choices        } }, .entry_type = FormEntryType::HORIZONTAL  },
   { .caption = "Sleep Screen :",            .u = { .ch = { .value = &sleep_screen,           .choice_count = 2, .choices = FormChoiceField::sleep_screen_choices   } }, .entry_type = FormEntryType::HORIZONTAL  },
   { .caption = "Books Directory View :",     .u = { .ch = { .value = &dir_view,               .choice_count = 2, .choices = FormChoiceField::dir_view_choices       } }, .entry_type = FormEntryType::HORIZONTAL  },
   #if INKPLATE_6PLUS || TOUCH_TRIAL
-    { .caption = "uSDCard Position (*):",    .u = { .ch = { .value = (int8_t *) &orientation, .choice_count = 4, .choices = FormChoiceField::orientation_choices    } }, .entry_type = FormEntryType::VERTICAL    },
+    #if defined(BOARD_TYPE_PAPER_S3)
+      { .caption = "uSDCard Position (triggers repagination):",    .u = { .ch = { .value = (int8_t *) &orientation, .choice_count = 4, .choices = FormChoiceField::orientation_choices    } }, .entry_type = FormEntryType::VERTICAL    },
+    #else
+      { .caption = "uSDCard Position (*):",               .u = { .ch = { .value = (int8_t *) &orientation, .choice_count = 4, .choices = FormChoiceField::orientation_choices    } }, .entry_type = FormEntryType::VERTICAL    },
+    #endif
   #else
-    { .caption = "Buttons Position (*):",    .u = { .ch = { .value = (int8_t *) &orientation, .choice_count = 3, .choices = FormChoiceField::orientation_choices    } }, .entry_type = FormEntryType::VERTICAL    },
+    #if defined(BOARD_TYPE_PAPER_S3)
+      { .caption = "Buttons Position (triggers repagination):",    .u = { .ch = { .value = (int8_t *) &orientation, .choice_count = 3, .choices = FormChoiceField::orientation_choices    } }, .entry_type = FormEntryType::VERTICAL    },
+    #else
+      { .caption = "Buttons Position (*):",               .u = { .ch = { .value = (int8_t *) &orientation, .choice_count = 3, .choices = FormChoiceField::orientation_choices    } }, .entry_type = FormEntryType::VERTICAL    },
+    #endif
   #endif
   #if !defined(BOARD_TYPE_PAPER_S3)
     { .caption = "Pixel Resolution :",         .u = { .ch = { .value = (int8_t *) &resolution,  .choice_count = 2, .choices = FormChoiceField::resolution_choices     } }, .entry_type = FormEntryType::HORIZONTAL  },
   #endif
   { .caption = "Show Battery Level :",       .u = { .ch = { .value = &show_battery,           .choice_count = 4, .choices = FormChoiceField::battery_visual_choices } }, .entry_type = FormEntryType::VERTICAL    },
-  { .caption = "Show Title (*):",            .u = { .ch = { .value = &show_title,             .choice_count = 2, .choices = FormChoiceField::yes_no_choices         } }, .entry_type = FormEntryType::HORIZONTAL  },
+  #if defined(BOARD_TYPE_PAPER_S3)
+    { .caption = "Show Title (triggers repagination):",            .u = { .ch = { .value = &show_title,             .choice_count = 2, .choices = FormChoiceField::yes_no_choices         } }, .entry_type = FormEntryType::HORIZONTAL  },
+  #else
+    { .caption = "Show Title (*):",                       .u = { .ch = { .value = &show_title,             .choice_count = 2, .choices = FormChoiceField::yes_no_choices         } }, .entry_type = FormEntryType::HORIZONTAL  },
+  #endif
   #if DATE_TIME_RTC
     { .caption = "Right Bottom Corner :",    .u = { .ch = { .value = &show_heap_or_rtc,       .choice_count = 3, .choices = FormChoiceField::right_corner_choices   } }, .entry_type = FormEntryType::VERTICAL    },
   #else
@@ -88,7 +178,7 @@ static FormEntry main_params_form_entries[MAIN_FORM_SIZE] = {
   #if INKPLATE_6PLUS || TOUCH_TRIAL
     { .caption = " DONE ",                   .u = { .ch = { .value = &done,                   .choice_count = 0, .choices = nullptr                                 } }, .entry_type = FormEntryType::DONE        }
   #endif
- };
+};
 
 #if INKPLATE_6PLUS || TOUCH_TRIAL
   static constexpr int8_t FONT_FORM_SIZE = 5;
@@ -96,41 +186,77 @@ static FormEntry main_params_form_entries[MAIN_FORM_SIZE] = {
   static constexpr int8_t FONT_FORM_SIZE = 4;
 #endif
 static FormEntry font_params_form_entries[FONT_FORM_SIZE] = {
-  { .caption = "Default Font Size (*):",      .u = { .ch = { .value = &font_size,          .choice_count = 4, .choices = FormChoiceField::font_size_choices } }, .entry_type = FormEntryType::HORIZONTAL },
-  { .caption = "Use Fonts in E-books (*):",   .u = { .ch = { .value = &use_fonts_in_books, .choice_count = 2, .choices = FormChoiceField::yes_no_choices    } }, .entry_type = FormEntryType::HORIZONTAL },
-  { .caption = "Default Font (*):",           .u = { .ch = { .value = &default_font,       .choice_count = 8, .choices = FormChoiceField::font_choices      } }, .entry_type = FormEntryType::VERTICAL   },
-  { .caption = "Show Images in E-books (*):", .u = { .ch = { .value = &show_images,        .choice_count = 2, .choices = FormChoiceField::yes_no_choices    } }, .entry_type = FormEntryType::HORIZONTAL },
+  #if defined(BOARD_TYPE_PAPER_S3)
+    { .caption = "Default Font Size (default):",      .u = { .ch = { .value = &font_size,          .choice_count = 4, .choices = FormChoiceField::font_size_choices } }, .entry_type = FormEntryType::HORIZONTAL },
+    { .caption = "Use Fonts in E-books (default):",   .u = { .ch = { .value = &use_fonts_in_books, .choice_count = 2, .choices = FormChoiceField::yes_no_choices    } }, .entry_type = FormEntryType::HORIZONTAL },
+    { .caption = "Default Font (default):",           .u = { .ch = { .value = &default_font,       .choice_count = 8, .choices = FormChoiceField::font_choices      } }, .entry_type = FormEntryType::VERTICAL   },
+    { .caption = "Show Images in E-books (default):", .u = { .ch = { .value = &show_images,        .choice_count = 2, .choices = FormChoiceField::yes_no_choices    } }, .entry_type = FormEntryType::HORIZONTAL },
+  #else
+    { .caption = "Default Font Size (*):",      .u = { .ch = { .value = &font_size,          .choice_count = 4, .choices = FormChoiceField::font_size_choices } }, .entry_type = FormEntryType::HORIZONTAL },
+    { .caption = "Use Fonts in E-books (*):",   .u = { .ch = { .value = &use_fonts_in_books, .choice_count = 2, .choices = FormChoiceField::yes_no_choices    } }, .entry_type = FormEntryType::HORIZONTAL },
+    { .caption = "Default Font (*):",           .u = { .ch = { .value = &default_font,       .choice_count = 8, .choices = FormChoiceField::font_choices      } }, .entry_type = FormEntryType::VERTICAL   },
+    { .caption = "Show Images in E-books (*):", .u = { .ch = { .value = &show_images,        .choice_count = 2, .choices = FormChoiceField::yes_no_choices    } }, .entry_type = FormEntryType::HORIZONTAL },
+  #endif
   #if INKPLATE_6PLUS || TOUCH_TRIAL
     { .caption = " DONE ",                    .u = { .ch = { .value = &done,               .choice_count = 0, .choices = nullptr                            } }, .entry_type = FormEntryType::DONE       }
   #endif
 };
 
 #if DATE_TIME_RTC
-  #if INKPLATE_6PLUS || TOUCH_TRIAL
-    static constexpr int8_t DATE_TIME_FORM_SIZE = 7;
-  #else
-    static constexpr int8_t DATE_TIME_FORM_SIZE = 6;
-  #endif
-
-  static FormEntry date_time_form_entries[DATE_TIME_FORM_SIZE] = {
-    { .caption = "Year :",   .u = { .val = { .value = &year,   .min = 2022, .max = 2099 } }, .entry_type = FormEntryType::UINT16  },
-    { .caption = "Month :",  .u = { .val = { .value = &month,  .min =    1, .max =   12 } }, .entry_type = FormEntryType::UINT16  },
-    { .caption = "Day :",    .u = { .val = { .value = &day,    .min =    1, .max =   31 } }, .entry_type = FormEntryType::UINT16  },
-    { .caption = "Hour :",   .u = { .val = { .value = &hour,   .min =    0, .max =   23 } }, .entry_type = FormEntryType::UINT16  },
-    { .caption = "Minute :", .u = { .val = { .value = &minute, .min =    0, .max =   59 } }, .entry_type = FormEntryType::UINT16  },
-    { .caption = "Second :", .u = { .val = { .value = &second, .min =    0, .max =   59 } }, .entry_type = FormEntryType::UINT16  },
-
+  #if defined(BOARD_TYPE_PAPER_S3)
     #if INKPLATE_6PLUS || TOUCH_TRIAL
-      { .caption = "DONE",   .u = { .ch  = { .value = &done,   .choice_count = 0, .choices = nullptr } }, .entry_type = FormEntryType::DONE    }
+      static constexpr int8_t DATE_TIME_FORM_SIZE = 3;
+    #else
+      static constexpr int8_t DATE_TIME_FORM_SIZE = 2;
     #endif
-  };
+
+    static FormEntry date_time_form_entries[DATE_TIME_FORM_SIZE] = {
+      { .caption = "Date:",
+        .u = { .val3 = {
+          .value0 = &year,  .min0 = 2022, .max0 = 2099, .label0 = "Year",
+          .value1 = &month, .min1 =    1, .max1 =   12, .label1 = "Month",
+          .value2 = &day,   .min2 =    1, .max2 =   31, .label2 = "Day"
+        } },
+        .entry_type = FormEntryType::UINT16_3 },
+      { .caption = "Time (24h):",
+        .u = { .val3 = {
+          .value0 = &hour,   .min0 = 0, .max0 = 23, .label0 = "Hour",
+          .value1 = &minute, .min1 = 0, .max1 = 59, .label1 = "Min",
+          .value2 = &second, .min2 = 0, .max2 = 59, .label2 = "Sec"
+        } },
+        .entry_type = FormEntryType::UINT16_3 },
+
+      #if INKPLATE_6PLUS || TOUCH_TRIAL
+        { .caption = "DONE",   .u = { .ch  = { .value = &done,   .choice_count = 0, .choices = nullptr } }, .entry_type = FormEntryType::DONE    }
+      #endif
+    };
+  #else
+    #if INKPLATE_6PLUS || TOUCH_TRIAL
+      static constexpr int8_t DATE_TIME_FORM_SIZE = 7;
+    #else
+      static constexpr int8_t DATE_TIME_FORM_SIZE = 6;
+    #endif
+
+    static FormEntry date_time_form_entries[DATE_TIME_FORM_SIZE] = {
+      { .caption = "Year :",   .u = { .val = { .value = &year,   .min = 2022, .max = 2099 } }, .entry_type = FormEntryType::UINT16  },
+      { .caption = "Month :",  .u = { .val = { .value = &month,  .min =    1, .max =   12 } }, .entry_type = FormEntryType::UINT16  },
+      { .caption = "Day :",    .u = { .val = { .value = &day,    .min =    1, .max =   31 } }, .entry_type = FormEntryType::UINT16  },
+      { .caption = "Hour :",         .u = { .val = { .value = &hour,   .min =    0, .max =   23 } }, .entry_type = FormEntryType::UINT16  },
+      { .caption = "Minute :", .u = { .val = { .value = &minute, .min =    0, .max =   59 } }, .entry_type = FormEntryType::UINT16  },
+      { .caption = "Second :", .u = { .val = { .value = &second, .min =    0, .max =   59 } }, .entry_type = FormEntryType::UINT16  },
+
+      #if INKPLATE_6PLUS || TOUCH_TRIAL
+        { .caption = "DONE",   .u = { .ch  = { .value = &done,   .choice_count = 0, .choices = nullptr } }, .entry_type = FormEntryType::DONE    }
+      #endif
+    };
+  #endif
 #endif
 
 static void restore_option_menu();
 static void option_about();
 
 extern bool start_web_server();
-extern bool  stop_web_server();
+extern void stop_web_server();
 
 static void
 main_parameters()
@@ -167,7 +293,11 @@ main_parameters()
   form_viewer.show(
     main_params_form_entries, 
     MAIN_FORM_SIZE, 
-    "(*) Will trigger e-book pages location recalc.");
+    #if defined(BOARD_TYPE_PAPER_S3)
+      nullptr);
+    #else
+      "(*) Will trigger e-book pages location recalc.");
+    #endif
 
   option_controller.set_main_form_is_shown();
 }
@@ -189,7 +319,11 @@ default_parameters()
   form_viewer.show(
     font_params_form_entries, 
     FONT_FORM_SIZE, 
-    "(*) Used as e-book default values.");
+    #if defined(BOARD_TYPE_PAPER_S3)
+      nullptr);
+    #else
+      "(*) Used as e-book default values.");
+    #endif
 
   option_controller.set_font_form_is_shown();
 }
@@ -198,15 +332,22 @@ static void
 wifi_mode()
 {
   #if EPUB_INKPLATE_BUILD  
+    #if defined(BOARD_TYPE_PAPER_S3)
+      if (!wifi_credentials_present()) {
+        wifi_show_setup_form(WifiPendingAction::WEB_SERVER, 4);
+        return;
+      }
+    #endif
+
     epub.close_file();
     fonts.clear(true);
     fonts.clear_glyph_caches();
-    
+
     event_mgr.set_stay_on(true); // DO NOT sleep
 
-    if (start_web_server()) {
-      option_controller.set_wait_for_key_after_wifi();
-    }
+    stop_web_server_on_key = start_web_server();
+    return_menu_index_on_key = 4;
+    option_controller.set_wait_for_key_after_wifi();
   #endif
 }
 
@@ -270,7 +411,12 @@ init_nvs()
     minute = tim.tm_min;
     second = tim.tm_sec;
 
-    form_viewer.show(date_time_form_entries, DATE_TIME_FORM_SIZE, "Hour is in 24 hours format.");
+    form_viewer.show(date_time_form_entries, DATE_TIME_FORM_SIZE,
+      #if defined(BOARD_TYPE_PAPER_S3)
+        nullptr);
+      #else
+        "Hour is in 24 hours format.");
+      #endif
     option_controller.set_date_time_form_is_shown();
   }
 
@@ -302,6 +448,13 @@ init_nvs()
     page_locs.abort_threads();
     epub.close_file();
 
+    #if EPUB_INKPLATE_BUILD && defined(BOARD_TYPE_PAPER_S3)
+      if (!wifi_credentials_present()) {
+        wifi_show_setup_form(WifiPendingAction::NTP, 8);
+        return;
+      }
+    #endif
+
     std::string ntp_server;
     config.get(Config::Ident::NTP_SERVER, ntp_server);
 
@@ -313,15 +466,20 @@ init_nvs()
     if (ntp.get_and_set_time()) {
       time_t time;
       Clock::get_date_time(time);
-      msg_viewer.show(MsgViewer::MsgType::NTP_CLOCK, true, true, 
-        "Date/Time Retrival Completed", 
-        "Local Time is %s. The device will now restart.", ctime(&time));
+      msg_viewer.show(MsgViewer::MsgType::NTP_CLOCK, true, true,
+        "Date/Time Retrival Completed",
+        "Local Time is %s.", ctime(&time));
     }
     else {
-      msg_viewer.show(MsgViewer::MsgType::NTP_CLOCK, true, true, 
-        "Date/Time Retrival Failed", 
-        "Unable to get Date/Time from NTP Server! The device will now restart.");
+      msg_viewer.show(MsgViewer::MsgType::NTP_CLOCK, true, true,
+        "Date/Time Retrival Failed",
+        "Unable to get Date/Time from NTP Server! Please verify WiFi and server settings.");
     }
+
+    #if EPUB_INKPLATE_BUILD && defined(BOARD_TYPE_PAPER_S3)
+      stop_web_server_on_key = false;
+      return_menu_index_on_key = 8;
+    #endif
 
     option_controller.set_wait_for_key_after_wifi();
   }
@@ -449,6 +607,64 @@ OptionController::leave(bool going_to_deep_sleep)
 void 
 OptionController::input_event(const EventMgr::Event & event)
 {
+  #if EPUB_INKPLATE_BUILD && defined(BOARD_TYPE_PAPER_S3)
+    if (wifi_setup_form_is_shown) {
+      if (form_viewer.event(event)) {
+        wifi_setup_form_is_shown = false;
+        msg_viewer.show(MsgViewer::MsgType::CONFIRM, true, true,
+                        "Save WiFi Credentials",
+                        "Save these WiFi credentials and continue?");
+        wifi_setup_confirm_is_shown = true;
+      }
+      return;
+    }
+    else if (wifi_setup_confirm_is_shown) {
+      bool ok;
+      if (msg_viewer.confirm(event, ok)) {
+        wifi_setup_confirm_is_shown = false;
+
+        if (!ok) {
+          wifi_pending_action = WifiPendingAction::NONE;
+          #if defined(BOARD_TYPE_PAPER_S3)
+            menu_viewer.show(menu, return_menu_index_on_key, false);
+          #else
+            menu_viewer.show(menu);
+          #endif
+          return;
+        }
+
+        if (wifi_ssid_buf[0] == 0) {
+          wifi_show_setup_form(wifi_pending_action, return_menu_index_on_key);
+          return;
+        }
+
+        std::string ssid = wifi_ssid_buf;
+        std::string pwd  = wifi_pwd_buf;
+        config.put(Config::Ident::SSID, ssid);
+        config.put(Config::Ident::PWD,  pwd );
+        config.save(true);
+
+        WifiPendingAction action = wifi_pending_action;
+        wifi_pending_action = WifiPendingAction::NONE;
+
+        if (action == WifiPendingAction::WEB_SERVER) {
+          wifi_mode();
+        }
+        else if (action == WifiPendingAction::NTP) {
+          ntp_clock_adjust();
+        }
+        else {
+          #if defined(BOARD_TYPE_PAPER_S3)
+            menu_viewer.show(menu, return_menu_index_on_key, false);
+          #else
+            menu_viewer.show(menu);
+          #endif
+        }
+      }
+      return;
+    }
+  #endif
+
   if (main_form_is_shown) {
     if (form_viewer.event(event)) {
       main_form_is_shown = false;
@@ -564,18 +780,34 @@ OptionController::input_event(const EventMgr::Event & event)
 
   #if EPUB_INKPLATE_BUILD
     else if (wait_for_key_after_wifi) {
-      msg_viewer.show(MsgViewer::MsgType::INFO, 
-                      false, true, 
-                      "Restarting", 
-                      "The device is now restarting. Please wait.");
       wait_for_key_after_wifi = false;
-      stop_web_server();
+
+      #if defined(BOARD_TYPE_PAPER_S3)
+        if (stop_web_server_on_key) {
+          stop_web_server();
+          stop_web_server_on_key = false;
+        }
+        event_mgr.set_stay_on(false);
+      #else
+        msg_viewer.show(MsgViewer::MsgType::INFO, 
+                        false, true, 
+                        "Restarting", 
+                        "The device is now restarting. Please wait.");
+        stop_web_server();
+        event_mgr.set_stay_on(false);
+      #endif
+
       if (books_refresh_needed) {
         books_refresh_needed = false;
         int16_t dummy;
         books_dir.refresh(nullptr, dummy, true);
       }
-      esp_restart();
+
+      #if defined(BOARD_TYPE_PAPER_S3)
+        menu_viewer.show(menu, return_menu_index_on_key, false);
+      #else
+        esp_restart();
+      #endif
     }
   #endif
 

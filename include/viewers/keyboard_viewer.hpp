@@ -2,13 +2,15 @@
 //
 // MIT License. Look at file licenses.txt for details.
 
-// Not ready yet... not sure it will be used in the future...
-#if 0
 #pragma once
 #include "global.hpp"
 
+#include "controllers/event_mgr.hpp"
+#include "models/fonts.hpp"
 #include "screen.hpp"
 #include "viewers/page.hpp"
+
+#if INKPLATE_6PLUS || TOUCH_TRIAL
 
 /**
  * @brief Message presentation class
@@ -20,48 +22,95 @@ class KeyboardViewer
 {
   private:
     static constexpr char const * TAG = "KeyboardViewer";
-    Page::Format fmt;
-    
+
     enum class KBType : int8_t { ALFA, ALFA_SHIFTED, NUMBERS, SPECIAL };
+    enum class KeyCode : int16_t {
+      SHIFT = -1,
+      BACKSPACE = -2,
+      SPACE = -3,
+      MODE_ABC = -4,
+      MODE_123 = -5,
+      MODE_SPECIAL = -6,
+      OK = -7,
+      CANCEL = -8
+    };
 
-    KBType         current_kb_type;
-    uint16_t       width;
-    const uint16_t HEIGHT = 240;
+    struct Key {
+      Pos pos;
+      Dim dim;
+      int16_t code;
+      const char * label;
+    };
 
-    static constexpr char const * alfa_line_1_low = "qwertyuiop" ;
-    static constexpr char const * alfa_line_2_low = "asdfghjkl"  ;
-    static constexpr char const * alfa_line_3_low = "\1zxcvbnm\b"; // \1 == 'shift', \b == 'backspace'
-    static constexpr char const * alfa_line_4     = "\2 \r"      ; // \2 == '123', ' ' == 'space', \r == 'return'
+    static constexpr uint8_t MAX_KEYS = 64;
+    static constexpr uint8_t FONT_SIZE = 14;
+    static constexpr uint8_t LABEL_FONT_SIZE = 10;
+    static constexpr uint8_t VALUE_FONT_SIZE = 12;
 
-    static constexpr char const * alfa_line_1_upp = "QWERTYUIOP" ;
-    static constexpr char const * alfa_line_2_upp = "ASDFGHJKL"  ;
-    static constexpr char const * alfa_line_3_upp = "\1ZXCVBNM\b"; // \1 == 'shift', \b == 'backspace'
+    Page::Format fmt;
+    KBType current_kb_type;
 
-    static constexpr char const * num_line_1      = "1234567890" ;
-    static constexpr char const * num_line_2      = "-/:;()$&@\"";
-    static constexpr char const * num_line_3      = "\3.,?!'\b"  ; // \3 == '#+=', \b == 'backspace'
-    static constexpr char const * num_line_4      = "\4 \r"      ; // \4 == 'ABC', 
+    char * client_buf = nullptr;
+    uint16_t client_buf_len = 0;
+    uint16_t client_len = 0;
+    bool password_mode = false;
 
-    static constexpr char const * special_line_1  = "[]{}#%^*+=" ;
-    static constexpr char const * special_line_2  = "_\\|~<>`/\"@";
-    static constexpr char const * special_line_3  = "\2.,?!'";
-    static constexpr char const * special_line_4  = "\4 \r";     ; // \4 == 'ABC', ' ' == 'space', \4 == 'return'
+    char original_buf[96];
+    const char * caption = nullptr;
 
-    void show_kb(KBType kb_type);
-    void show_char(char           ch, uint16_t & x, uint16_t y);
-    void show_line(const char * line, uint16_t & x, uint16_t y);
+    Key keys[MAX_KEYS];
+    uint8_t key_count = 0;
+
+    Pos modal_pos;
+    Dim modal_dim;
+    Pos value_pos;
+    Dim value_dim;
+
+    void clamp_client_len();
+    void set_kb_type(KBType kb_type);
+    void add_key(Pos pos, Dim dim, int16_t code, const char * label);
+    const Key * find_key(uint16_t x, uint16_t y) const;
+
+    void draw_static();
+    void draw_value();
+    void draw_keys();
+
+    void append_char(char ch);
+    void backspace();
+
   public:
     KeyboardViewer() : current_kb_type(KBType::ALFA) {};
 
-    typedef void (* UpdateHandler)(char ch);
-    bool get_alfanum(char * str, uint16_t len, UpdateHandler handler);
-    bool get_num(int32_t & val);
+    void show(char * str, uint16_t len, const char * _caption, bool is_password);
+    bool event(const EventMgr::Event & event);
+
+    const char * get_value() const { return (client_buf != nullptr) ? client_buf : ""; }
 };
+
+#else
+
+class KeyboardViewer
+{
+  public:
+    void show(char * str, uint16_t len, const char * _caption, bool is_password) {
+      (void)str;
+      (void)len;
+      (void)_caption;
+      (void)is_password;
+    }
+
+    bool event(const EventMgr::Event & event) {
+      (void)event;
+      return false;
+    }
+
+    const char * get_value() const { return ""; }
+};
+
+#endif
 
 #if __KEYBOARD_VIEWER__
   KeyboardViewer keyboard_viewer;
 #else
   extern KeyboardViewer keyboard_viewer;
-#endif
-
 #endif

@@ -19,6 +19,8 @@ static bool               wifi_first_start       =    true;
 static bool               netif_inited           =   false;
 static bool               event_loop_created     =   false;
 static bool               wifi_sta_netif_created =   false;
+static bool               wifi_driver_inited     =   false;
+static bool               wifi_handlers_reg      =   false;
 
 // ----- wifi_sta_event_handler() -----
 
@@ -88,39 +90,89 @@ WIFI::start(void)
   wifi_first_start = true;
 
   if (wifi_event_group == nullptr) wifi_event_group = xEventGroupCreate();
+  if (wifi_event_group == nullptr) {
+    LOG_E("WiFi: failed to create event group (out of memory).");
+    return false;
+  }
+
+  xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
 
   // Initialize network interface and default event loop only once for the
   // entire application lifetime. Repeated initialization will return
   // ESP_ERR_INVALID_STATE, so guard these calls explicitly.
 
   if (!netif_inited) {
-    ESP_ERROR_CHECK(esp_netif_init());
+    esp_err_t err = esp_netif_init();
+    if (err != ESP_OK) {
+      LOG_E("esp_netif_init failed (%s).", esp_err_to_name(err));
+      stop();
+      return false;
+    }
     netif_inited = true;
   }
 
   if (!event_loop_created) {
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_err_t err = esp_event_loop_create_default();
+    if (err != ESP_OK) {
+      LOG_E("esp_event_loop_create_default failed (%s).", esp_err_to_name(err));
+      stop();
+      return false;
+    }
     event_loop_created = true;
   }
 
   if (!wifi_sta_netif_created) {
-    esp_netif_create_default_wifi_sta();
+    if (esp_netif_create_default_wifi_sta() == nullptr) {
+      LOG_E("esp_netif_create_default_wifi_sta failed (out of memory)." );
+      stop();
+      return false;
+    }
     wifi_sta_netif_created = true;
   }
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-  ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-  ESP_ERROR_CHECK(esp_event_handler_register(
+  #if defined(BOARD_TYPE_PAPER_S3)
+    // PaperS3 has tighter internal DRAM constraints; reduce WiFi buffers to
+    // improve chances of successful init.
+    if (cfg.static_rx_buf_num > 10) cfg.static_rx_buf_num = 10;
+    if (cfg.dynamic_rx_buf_num > 16) cfg.dynamic_rx_buf_num = 16;
+    if (cfg.cache_tx_buf_num  > 16) cfg.cache_tx_buf_num  = 16;
+  #endif
+
+  esp_err_t err = esp_wifi_init(&cfg);
+  if (err != ESP_OK) {
+    LOG_E("esp_wifi_init failed (%s).", esp_err_to_name(err));
+    // Try to cleanup a partially initialized driver; ignore errors.
+    (void)esp_wifi_deinit();
+    stop();
+    return false;
+  }
+  wifi_driver_inited = true;
+  running = true;
+
+  err = esp_event_handler_register(
     WIFI_EVENT, 
     ESP_EVENT_ANY_ID,    
     &wifi_sta_event_handler, 
-    NULL));
-  ESP_ERROR_CHECK(esp_event_handler_register(
+    NULL);
+  if (err != ESP_OK) {
+    LOG_E("esp_event_handler_register(WIFI_EVENT) failed (%s).", esp_err_to_name(err));
+    stop();
+    return false;
+  }
+
+  err = esp_event_handler_register(
     IP_EVENT,   
     IP_EVENT_STA_GOT_IP, 
     &wifi_sta_event_handler, 
-    NULL));
+    NULL);
+  if (err != ESP_OK) {
+    LOG_E("esp_event_handler_register(IP_EVENT) failed (%s).", esp_err_to_name(err));
+    stop();
+    return false;
+  }
+  wifi_handlers_reg = true;
 
   std::string wifi_ssid;
   std::string wifi_pwd;
@@ -140,9 +192,24 @@ WIFI::start(void)
   strcpy((char *) wifi_config.sta.ssid,     wifi_ssid.c_str());
   strcpy((char *) wifi_config.sta.password, wifi_pwd.c_str());
 
-  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-  ESP_ERROR_CHECK(esp_wifi_set_config((wifi_interface_t)ESP_IF_WIFI_STA, &wifi_config));
-  ESP_ERROR_CHECK(esp_wifi_start());
+  err = esp_wifi_set_mode(WIFI_MODE_STA);
+  if (err != ESP_OK) {
+    LOG_E("esp_wifi_set_mode failed (%s).", esp_err_to_name(err));
+    stop();
+    return false;
+  }
+  err = esp_wifi_set_config((wifi_interface_t)ESP_IF_WIFI_STA, &wifi_config);
+  if (err != ESP_OK) {
+    LOG_E("esp_wifi_set_config failed (%s).", esp_err_to_name(err));
+    stop();
+    return false;
+  }
+  err = esp_wifi_start();
+  if (err != ESP_OK) {
+    LOG_E("esp_wifi_start failed (%s).", esp_err_to_name(err));
+    stop();
+    return false;
+  }
 
   LOG_I("wifi_init_sta finished.");
 
@@ -154,7 +221,11 @@ WIFI::start(void)
     WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
     pdFALSE,
     pdFALSE,
-    portMAX_DELAY);
+    pdMS_TO_TICKS(30000));
+
+  if ((bits & (WIFI_CONNECTED_BIT | WIFI_FAIL_BIT)) == 0) {
+    LOG_E("WiFi connection timeout.");
+  }
 
   if (bits & WIFI_CONNECTED_BIT) {
     LOG_I("connected to ap SSID:%s password:%s",
@@ -169,29 +240,33 @@ WIFI::start(void)
     LOG_E("UNEXPECTED EVENT");
   }
 
-  running = true;
   return connected;
 }
 
 void
 WIFI::stop()
 {
-  if (running) {
-    // Unregister the same handlers we registered in start():
-    //   WIFI_EVENT, ESP_EVENT_ANY_ID
-    //   IP_EVENT,   IP_EVENT_STA_GOT_IP
-    ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT,   IP_EVENT_STA_GOT_IP, &wifi_sta_event_handler));
-    ESP_ERROR_CHECK(esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,    &wifi_sta_event_handler));
+  // Always attempt to cleanup; never abort on failure.
 
+  if (wifi_handlers_reg) {
+    (void)esp_event_handler_unregister(IP_EVENT,   IP_EVENT_STA_GOT_IP, &wifi_sta_event_handler);
+    (void)esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,    &wifi_sta_event_handler);
+    wifi_handlers_reg = false;
+  }
+
+  if (wifi_event_group != nullptr) {
     vEventGroupDelete(wifi_event_group);
     wifi_event_group = nullptr;
-
-    esp_wifi_disconnect();
-    esp_wifi_stop();
-    esp_wifi_deinit();
-
-    running = false;
   }
+
+  if (wifi_driver_inited) {
+    (void)esp_wifi_disconnect();
+    (void)esp_wifi_stop();
+    (void)esp_wifi_deinit();
+    wifi_driver_inited = false;
+  }
+
+  running = false;
 }
 
 #endif
