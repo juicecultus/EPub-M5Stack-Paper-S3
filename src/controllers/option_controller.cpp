@@ -51,6 +51,7 @@ static int8_t done;
 
   static bool stop_web_server_on_key = false;
   static uint8_t return_menu_index_on_key = 0;
+  static bool wifi_return_to_wifi_menu_on_key = false;
 
   static char wifi_ssid_buf[32];
   static char wifi_pwd_buf[32];
@@ -102,10 +103,11 @@ static int8_t done;
   }
 
   static void
-  wifi_show_setup_form(WifiPendingAction action, uint8_t return_menu_index)
+  wifi_show_setup_form(WifiPendingAction action, uint8_t return_menu_index, bool return_to_wifi_menu)
   {
     wifi_pending_action = action;
     return_menu_index_on_key = return_menu_index;
+    wifi_return_to_wifi_menu_on_key = return_to_wifi_menu;
     wifi_load_buffers_from_config();
     wifi_done = 1;
 
@@ -257,6 +259,16 @@ static void option_about();
 
 extern bool start_web_server();
 extern void stop_web_server();
+extern bool is_web_server_running();
+
+#if EPUB_INKPLATE_BUILD && defined(BOARD_TYPE_PAPER_S3)
+  static void wifi_menu_show();
+  static void restore_wifi_menu();
+  static void wifi_menu_edit_credentials();
+  static void wifi_menu_toggle_web_server();
+  static void wifi_start_web_server_after_setup();
+  static void wifi_return_to_menu(uint8_t return_menu_index);
+#endif
 
 static void
 main_parameters()
@@ -333,10 +345,8 @@ wifi_mode()
 {
   #if EPUB_INKPLATE_BUILD  
     #if defined(BOARD_TYPE_PAPER_S3)
-      if (!wifi_credentials_present()) {
-        wifi_show_setup_form(WifiPendingAction::WEB_SERVER, 4);
-        return;
-      }
+      wifi_menu_show();
+      return;
     #endif
 
     epub.close_file();
@@ -364,7 +374,7 @@ init_nvs()
         "E-Books History Cleared", 
         "The E-Books History has been initialized with success.");
 
-      msg_viewer.auto_dismiss_in(5000, restore_option_menu);
+      msg_viewer.auto_dismiss_in(7000, restore_option_menu);
     }
     else {
       msg_viewer.show(
@@ -375,7 +385,7 @@ init_nvs()
         "The E-Books History has not been initialized properly. "
         "Potential hardware problem or software framework issue.");
 
-      msg_viewer.auto_dismiss_in(5000, restore_option_menu);
+      msg_viewer.auto_dismiss_in(7000, restore_option_menu);
     }
   #endif
 }
@@ -450,7 +460,7 @@ init_nvs()
 
     #if EPUB_INKPLATE_BUILD && defined(BOARD_TYPE_PAPER_S3)
       if (!wifi_credentials_present()) {
-        wifi_show_setup_form(WifiPendingAction::NTP, 8);
+        wifi_show_setup_form(WifiPendingAction::NTP, 8, false);
         return;
       }
     #endif
@@ -534,11 +544,99 @@ restore_option_menu()
   #endif
 }
 
+#if EPUB_INKPLATE_BUILD && defined(BOARD_TYPE_PAPER_S3)
+  static void wifi_menu_back();
+  static void wifi_menu_edit_credentials();
+  static void wifi_menu_toggle_web_server();
+
+  static MenuViewer::MenuEntry wifi_menu[] = {
+    { MenuViewer::Icon::RETURN, "Back",                   wifi_menu_back,             true,  true },
+    { MenuViewer::Icon::MAIN_PARAMS,   "WiFi settings",   wifi_menu_edit_credentials,  true,  true },
+    { MenuViewer::Icon::WIFI,          "Web server",      wifi_menu_toggle_web_server, true,  true },
+    { MenuViewer::Icon::END_MENU, nullptr,                 nullptr,                   false, false }
+  };
+
+  static void
+  wifi_menu_show()
+  {
+    page_locs.abort_threads();
+    wifi_menu[2].caption = is_web_server_running() ? "Stop web server" : "Start web server";
+    menu_viewer.show(wifi_menu, 0, false);
+  }
+
+  static void
+  wifi_return_to_menu(uint8_t return_menu_index)
+  {
+    if (wifi_return_to_wifi_menu_on_key) {
+      wifi_menu_show();
+    }
+    else {
+      menu_viewer.show(menu, return_menu_index, false);
+    }
+  }
+
+  static void
+  restore_wifi_menu()
+  {
+    wifi_menu_show();
+  }
+
+  static void
+  wifi_menu_back()
+  {
+    menu_viewer.show(menu, 4, false);
+  }
+
+  static void
+  wifi_menu_edit_credentials()
+  {
+    wifi_show_setup_form(WifiPendingAction::NONE, 0, true);
+  }
+
+  static void
+  wifi_menu_toggle_web_server()
+  {
+    if (is_web_server_running()) {
+      stop_web_server();
+      event_mgr.set_stay_on(false);
+
+      msg_viewer.show(MsgViewer::MsgType::WIFI, false, true,
+                      "Web Server Stopped",
+                      "The web server has been stopped.");
+      msg_viewer.auto_dismiss_in(7000, restore_wifi_menu);
+      return;
+    }
+
+    if (!wifi_credentials_present()) {
+      wifi_show_setup_form(WifiPendingAction::WEB_SERVER, 0, true);
+      return;
+    }
+
+    epub.close_file();
+    fonts.clear(true);
+    fonts.clear_glyph_caches();
+
+    event_mgr.set_stay_on(true); // DO NOT sleep
+
+    const bool started = start_web_server();
+    if (!started) {
+      event_mgr.set_stay_on(false);
+    }
+    msg_viewer.auto_dismiss_in(7000, restore_wifi_menu);
+  }
+
+  static void
+  wifi_start_web_server_after_setup()
+  {
+    wifi_menu_toggle_web_server();
+  }
+#endif
+
 static void
 option_about()
 {
   CommonActions::about();
-  msg_viewer.auto_dismiss_in(5000, restore_option_menu);
+  msg_viewer.auto_dismiss_in(7000, restore_option_menu);
 }
 
 #if INKPLATE_6PLUS
@@ -625,16 +723,12 @@ OptionController::input_event(const EventMgr::Event & event)
 
         if (!ok) {
           wifi_pending_action = WifiPendingAction::NONE;
-          #if defined(BOARD_TYPE_PAPER_S3)
-            menu_viewer.show(menu, return_menu_index_on_key, false);
-          #else
-            menu_viewer.show(menu);
-          #endif
+          wifi_return_to_menu(return_menu_index_on_key);
           return;
         }
 
         if (wifi_ssid_buf[0] == 0) {
-          wifi_show_setup_form(wifi_pending_action, return_menu_index_on_key);
+          wifi_show_setup_form(wifi_pending_action, return_menu_index_on_key, wifi_return_to_wifi_menu_on_key);
           return;
         }
 
@@ -648,17 +742,13 @@ OptionController::input_event(const EventMgr::Event & event)
         wifi_pending_action = WifiPendingAction::NONE;
 
         if (action == WifiPendingAction::WEB_SERVER) {
-          wifi_mode();
+          wifi_start_web_server_after_setup();
         }
         else if (action == WifiPendingAction::NTP) {
           ntp_clock_adjust();
         }
         else {
-          #if defined(BOARD_TYPE_PAPER_S3)
-            menu_viewer.show(menu, return_menu_index_on_key, false);
-          #else
-            menu_viewer.show(menu);
-          #endif
+          wifi_return_to_menu(return_menu_index_on_key);
         }
       }
       return;

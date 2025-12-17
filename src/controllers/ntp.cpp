@@ -27,7 +27,7 @@ bool NTP::get_and_set_time()
 {
   #if EPUB_INKPLATE_BUILD
 
-    int sockfd;
+    int sockfd = -1;
 
     constexpr uint16_t NTP_PORT            =           123;
     constexpr uint64_t NTP_TIMESTAMP_DELTA = 2208988800ull;
@@ -51,11 +51,18 @@ bool NTP::get_and_set_time()
 
       sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); // Create a UDP socket.
 
-      if (sockfd < 0) return error("ERROR opening socket");
+      if (sockfd < 0) {
+        wifi.stop();
+        return error("ERROR opening socket");
+      }
 
       server = gethostbyname(host_name.c_str()); // Convert URL to IP.
 
-      if (server == NULL) return error("ERROR, no such host");
+      if (server == NULL) {
+        close(sockfd);
+        wifi.stop();
+        return error("ERROR, no such host");
+      }
 
       // Zero out the server address structure.
 
@@ -73,16 +80,29 @@ bool NTP::get_and_set_time()
 
       // Call up the server using its IP address and port number.
 
-      if (connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) return error("ERROR connecting");
+      if (connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
+        close(sockfd);
+        wifi.stop();
+        return error("ERROR connecting");
+      }
 
       // Send it the NTP packet it wants. If n == -1, it failed.
 
-      if (write(sockfd, (char *) &packet, sizeof(ntp_packet)) < 0) return error("ERROR writing to socket");
+      if (write(sockfd, (char *) &packet, sizeof(ntp_packet)) < 0) {
+        close(sockfd);
+        wifi.stop();
+        return error("ERROR writing to socket");
+      }
 
       // Wait and receive the packet back from the server. If n == -1, it failed.
 
-      if (read(sockfd, (char *) &packet, sizeof(ntp_packet)) < 0) return error("ERROR reading from socket");
+      if (read(sockfd, (char *) &packet, sizeof(ntp_packet)) < 0) {
+        close(sockfd);
+        wifi.stop();
+        return error("ERROR reading from socket");
+      }
 
+      close(sockfd);
       wifi.stop();
 
       // These two fields contain the time-stamp seconds as the packet left the NTP server.

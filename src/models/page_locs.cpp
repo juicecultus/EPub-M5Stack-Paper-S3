@@ -716,6 +716,8 @@ PageLocs::retrieve_asap(int16_t itemref_index)
   LOG_D("-> %s <-", mgr_queue_data.req == MgrReq::ASAP_READY ? "ASAP_READY" : "ERROR!!!");
   relax = false;
 
+  if (mgr_queue_data.req != MgrReq::ASAP_READY) return false;
+  if (mgr_queue_data.itemref_index < 0) return false;
   return true;
 }
 

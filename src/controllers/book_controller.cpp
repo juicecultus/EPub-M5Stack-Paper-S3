@@ -16,6 +16,14 @@
   #include "nvs.h"
 #endif
 
+#if defined(BOARD_TYPE_PAPER_S3)
+  static void
+  restore_books_list_after_open_fail()
+  {
+    books_dir_controller.enter();
+  }
+#endif
+
 void 
 BookController::enter()
 { 
@@ -72,7 +80,28 @@ BookController::open_book_file(
       // book_viewer.show_page(current_page_id);
       return true;
     }
+
+    #if defined(BOARD_TYPE_PAPER_S3)
+      page_locs.stop_document();
+      epub.close_file();
+      msg_viewer.show(MsgViewer::MsgType::ALERT, false, true,
+        "Book load failed",
+        "Unable to open \"%s\". This may be an SD card read error or an unsupported EPUB.",
+        book_title.c_str());
+      msg_viewer.auto_dismiss_in(7000, restore_books_list_after_open_fail);
+    #endif
   }
+  #if defined(BOARD_TYPE_PAPER_S3)
+    else {
+      page_locs.stop_document();
+      epub.close_file();
+      msg_viewer.show(MsgViewer::MsgType::ALERT, false, true,
+        "Book load failed",
+        "Unable to open \"%s\". This may be an SD card read error or an unsupported EPUB.",
+        book_title.c_str());
+      msg_viewer.auto_dismiss_in(7000, restore_books_list_after_open_fail);
+    }
+  #endif
   return false;
 }
 

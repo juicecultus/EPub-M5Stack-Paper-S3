@@ -525,6 +525,8 @@ http_server_start()
   esp_err_t res = httpd_start(&server, &httpd_config);
   if (res != ESP_OK) {
     LOG_E("Failed to start file server (%s)!", esp_err_to_name(res));
+    free(server_data);
+    server_data = nullptr;
     return ESP_FAIL;
   }
 
@@ -591,22 +593,40 @@ start_web_server()
   if (wifi.start()) {
     if (http_server_start() == ESP_OK) {
       esp_ip4_addr_t ip = wifi.get_ip_address();
-      msg_viewer.show(MsgViewer::MsgType::WIFI, true, true, 
-        "Web Server", 
-        "The Web server is now running at ip " IPSTR ". To stop it, please " MSG ".", IP2STR(&ip));
+      #if defined(BOARD_TYPE_PAPER_S3)
+        msg_viewer.show(MsgViewer::MsgType::WIFI, false, true,
+          "Web Server",
+          "The Web server is now running at ip " IPSTR ". Use the WiFi menu to stop it.", IP2STR(&ip));
+      #else
+        msg_viewer.show(MsgViewer::MsgType::WIFI, true, true, 
+          "Web Server", 
+          "The Web server is now running at ip " IPSTR ". To stop it, please " MSG ".", IP2STR(&ip));
+      #endif
       started = true;
     }
     else {
-      msg_viewer.show(MsgViewer::MsgType::ALERT, true, true, 
-        "Web Server Failed", 
-        "The Web server was not able to start. Correct the situation and try again.");
+      #if defined(BOARD_TYPE_PAPER_S3)
+        msg_viewer.show(MsgViewer::MsgType::ALERT, false, true,
+          "Web Server Failed",
+          "The Web server was not able to start. Correct the situation and try again.");
+      #else
+        msg_viewer.show(MsgViewer::MsgType::ALERT, true, true, 
+          "Web Server Failed", 
+          "The Web server was not able to start. Correct the situation and try again.");
+      #endif
       wifi.stop();
     }
   }
   else {
-    msg_viewer.show(MsgViewer::MsgType::ALERT, true, true, 
-      "WiFi Startup Failed", 
-      "WiFi was not able to start the connection. Correct the situation and try again.");
+    #if defined(BOARD_TYPE_PAPER_S3)
+      msg_viewer.show(MsgViewer::MsgType::ALERT, false, true,
+        "WiFi Startup Failed",
+        "WiFi was not able to start the connection. Correct the situation and try again.");
+    #else
+      msg_viewer.show(MsgViewer::MsgType::ALERT, true, true, 
+        "WiFi Startup Failed", 
+        "WiFi was not able to start the connection. Correct the situation and try again.");
+    #endif
     wifi.stop();
   }
 
@@ -618,6 +638,12 @@ stop_web_server()
 {
   http_server_stop();
   wifi.stop();
+}
+
+bool
+is_web_server_running()
+{
+  return server_data != nullptr;
 }
 
 #endif

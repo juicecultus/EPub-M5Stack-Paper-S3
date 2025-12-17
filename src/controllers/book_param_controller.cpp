@@ -41,6 +41,8 @@ static int8_t done_res;
 
   static bool stop_web_server_on_key = false;
   static uint8_t return_menu_index_on_key = 0;
+  static bool wifi_return_to_wifi_menu_on_key = false;
+  static bool wifi_start_web_server_after_setup_on_key = false;
 
   static char wifi_ssid_buf[32];
   static char wifi_pwd_buf[32];
@@ -92,9 +94,11 @@ static int8_t done_res;
   }
 
   static void
-  wifi_show_setup_form(uint8_t return_menu_index)
+  wifi_show_setup_form(uint8_t return_menu_index, bool return_to_wifi_menu, bool start_web_server_after_setup)
   {
     return_menu_index_on_key = return_menu_index;
+    wifi_return_to_wifi_menu_on_key = return_to_wifi_menu;
+    wifi_start_web_server_after_setup_on_key = start_web_server_after_setup;
     wifi_load_buffers_from_config();
     wifi_done = 1;
 
@@ -208,7 +212,7 @@ revert_to_defaults()
                   "E-book parameters reverted to default values.");
 
   #if defined(BOARD_TYPE_PAPER_S3)
-    msg_viewer.auto_dismiss_in(5000, book_param_restore_menu);
+    msg_viewer.auto_dismiss_in(7000, book_param_restore_menu);
   #endif
 
   if (old_use_fonts_in_book != book_format_params->use_fonts_in_book) {
@@ -250,16 +254,22 @@ toc_ctrl()
 
 extern bool start_web_server();
 extern void stop_web_server();
+extern bool is_web_server_running();
+
+#if EPUB_INKPLATE_BUILD && defined(BOARD_TYPE_PAPER_S3)
+  static void wifi_menu_show();
+  static void restore_wifi_menu();
+  static void wifi_menu_toggle_web_server();
+  static void wifi_return_to_menu(uint8_t return_menu_index);
+#endif
 
 static void
 wifi_mode()
 {
   #if EPUB_INKPLATE_BUILD
     #if defined(BOARD_TYPE_PAPER_S3)
-      if (!wifi_credentials_present()) {
-        wifi_show_setup_form(6);
-        return;
-      }
+      wifi_menu_show();
+      return;
     #endif
 
     epub.close_file();
@@ -299,6 +309,92 @@ static MenuViewer::MenuEntry menu[10] = {
   { MenuViewer::Icon::END_MENU,    nullptr,                                nullptr                      , false, true }
 }; 
 
+#if EPUB_INKPLATE_BUILD && defined(BOARD_TYPE_PAPER_S3)
+  static void wifi_menu_back();
+  static void wifi_menu_edit_credentials();
+  static void wifi_menu_toggle_web_server();
+
+  static MenuViewer::MenuEntry wifi_menu[] = {
+    { MenuViewer::Icon::RETURN, "Back",                   wifi_menu_back,             true,  true },
+    { MenuViewer::Icon::MAIN_PARAMS,   "WiFi settings",   wifi_menu_edit_credentials,  true,  true },
+    { MenuViewer::Icon::WIFI,          "Web server",      wifi_menu_toggle_web_server, true,  true },
+    { MenuViewer::Icon::END_MENU, nullptr,                 nullptr,                   false, false }
+  };
+
+  static void
+  wifi_menu_show()
+  {
+    page_locs.abort_threads();
+    wifi_menu[2].caption = is_web_server_running() ? "Stop web server" : "Start web server";
+    menu_viewer.show(wifi_menu, 0, false);
+  }
+
+  static void
+  wifi_return_to_menu(uint8_t return_menu_index)
+  {
+    if (wifi_return_to_wifi_menu_on_key) {
+      wifi_menu_show();
+    }
+    else {
+      menu[1].visible = toc.is_ready() && !toc.is_empty();
+      menu_viewer.show(menu, return_menu_index, false);
+    }
+  }
+
+  static void
+  restore_wifi_menu()
+  {
+    wifi_menu_show();
+  }
+
+  static void
+  wifi_menu_back()
+  {
+    menu[1].visible = toc.is_ready() && !toc.is_empty();
+    menu_viewer.show(menu, 6, false);
+  }
+
+  static void
+  wifi_menu_edit_credentials()
+  {
+    wifi_show_setup_form(0, true, false);
+  }
+
+  static void
+  wifi_menu_toggle_web_server()
+  {
+    if (is_web_server_running()) {
+      stop_web_server();
+      event_mgr.set_stay_on(false);
+
+      msg_viewer.show(MsgViewer::MsgType::WIFI, false, true,
+                      "Web Server Stopped",
+                      "The web server has been stopped.");
+      msg_viewer.auto_dismiss_in(7000, restore_wifi_menu);
+      return;
+    }
+
+    if (!wifi_credentials_present()) {
+      wifi_show_setup_form(0, true, true);
+      return;
+    }
+
+    epub.close_file();
+    fonts.clear(true);
+    fonts.clear_glyph_caches();
+
+    event_mgr.set_stay_on(true); // DO NOT sleep
+
+    const bool started = start_web_server();
+    if (!started) {
+      event_mgr.set_stay_on(false);
+    }
+
+    msg_viewer.auto_dismiss_in(7000, restore_wifi_menu);
+  }
+
+#endif
+
 static void
 book_param_restore_menu()
 {
@@ -315,7 +411,7 @@ book_param_about()
 {
   CommonActions::about();
   #if defined(BOARD_TYPE_PAPER_S3)
-    msg_viewer.auto_dismiss_in(5000, book_param_restore_menu);
+    msg_viewer.auto_dismiss_in(7000, book_param_restore_menu);
   #endif
 }
 
@@ -364,8 +460,7 @@ BookParamController::input_event(const EventMgr::Event & event)
 
         if (!ok) {
           #if defined(BOARD_TYPE_PAPER_S3)
-            menu[1].visible = toc.is_ready() && !toc.is_empty();
-            menu_viewer.show(menu, return_menu_index_on_key, false);
+            wifi_return_to_menu(return_menu_index_on_key);
           #else
             menu_viewer.show(menu);
           #endif
@@ -373,7 +468,7 @@ BookParamController::input_event(const EventMgr::Event & event)
         }
 
         if (wifi_ssid_buf[0] == 0) {
-          wifi_show_setup_form(return_menu_index_on_key);
+          wifi_show_setup_form(return_menu_index_on_key, wifi_return_to_wifi_menu_on_key, wifi_start_web_server_after_setup_on_key);
           return;
         }
 
@@ -383,7 +478,12 @@ BookParamController::input_event(const EventMgr::Event & event)
         config.put(Config::Ident::PWD,  pwd );
         config.save(true);
 
-        wifi_mode();
+        if (wifi_start_web_server_after_setup_on_key) {
+          wifi_menu_toggle_web_server();
+        }
+        else {
+          wifi_return_to_menu(return_menu_index_on_key);
+        }
       }
       return;
     }
@@ -474,7 +574,7 @@ BookParamController::input_event(const EventMgr::Event & event)
         msg_viewer.show(MsgViewer::MsgType::INFO, false, false, 
                         "Canceled", "The e-book was not deleted.");
         #if defined(BOARD_TYPE_PAPER_S3)
-          msg_viewer.auto_dismiss_in(5000, book_param_restore_menu);
+          msg_viewer.auto_dismiss_in(7000, book_param_restore_menu);
         #endif
       }
       delete_current_book = false;

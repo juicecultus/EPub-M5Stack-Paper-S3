@@ -135,9 +135,9 @@ WIFI::start(void)
   #if defined(BOARD_TYPE_PAPER_S3)
     // PaperS3 has tighter internal DRAM constraints; reduce WiFi buffers to
     // improve chances of successful init.
-    if (cfg.static_rx_buf_num > 10) cfg.static_rx_buf_num = 10;
-    if (cfg.dynamic_rx_buf_num > 16) cfg.dynamic_rx_buf_num = 16;
-    if (cfg.cache_tx_buf_num  > 16) cfg.cache_tx_buf_num  = 16;
+    if (cfg.static_rx_buf_num > 6) cfg.static_rx_buf_num = 6;
+    if (cfg.dynamic_rx_buf_num > 8) cfg.dynamic_rx_buf_num = 8;
+    if (cfg.cache_tx_buf_num  > 8) cfg.cache_tx_buf_num  = 8;
   #endif
 
   esp_err_t err = esp_wifi_init(&cfg);
