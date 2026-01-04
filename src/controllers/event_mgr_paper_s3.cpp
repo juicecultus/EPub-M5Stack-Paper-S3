@@ -87,24 +87,34 @@ static esp_err_t gt911_read_reg(uint8_t addr, uint16_t reg, uint8_t * data, size
   return i2c_master_transmit_receive(dev, reg_buf, sizeof(reg_buf), data, len, 100);
 }
 
-static bool gt911_read_point(uint16_t * x, uint16_t * y)
+enum class Gt911ReadResult : uint8_t {
+  UPDATED,    // New sample with at least one touch point.
+  NO_TOUCH,   // New sample indicates no touch points (release).
+  NO_UPDATE,  // No new sample available.
+  ERROR,      // I2C / device error.
+};
+
+static Gt911ReadResult gt911_read_point(uint16_t * x, uint16_t * y)
 {
-  if (!gt911_ok || (x == nullptr) || (y == nullptr)) return false;
+  if (!gt911_ok || (x == nullptr) || (y == nullptr)) return Gt911ReadResult::ERROR;
 
   uint8_t status = 0;
-  if (gt911_read_reg(gt911_addr, 0x814E, &status, 1) != ESP_OK) return false;
+  if (gt911_read_reg(gt911_addr, 0x814E, &status, 1) != ESP_OK) return Gt911ReadResult::ERROR;
 
-  if ((status & 0x80) == 0) return false;
+  // The 0x80 bit indicates a new sample is ready. If it's not set, keep the
+  // existing gesture state untouched (NO_UPDATE) to avoid false "release"
+  // transitions which can register as double taps on short presses.
+  if ((status & 0x80) == 0) return Gt911ReadResult::NO_UPDATE;
 
   uint8_t points = status & 0x0F;
   if (points == 0) {
     uint8_t zero = 0;
     gt911_write_reg(gt911_addr, 0x814E, &zero, 1);
-    return false;
+    return Gt911ReadResult::NO_TOUCH;
   }
 
   uint8_t data[4] = { 0 };
-  if (gt911_read_reg(gt911_addr, 0x8150, data, sizeof(data)) != ESP_OK) return false;
+  if (gt911_read_reg(gt911_addr, 0x8150, data, sizeof(data)) != ESP_OK) return Gt911ReadResult::ERROR;
 
   *x = (uint16_t)((data[1] << 8) | data[0]);
   *y = (uint16_t)((data[3] << 8) | data[2]);
@@ -146,7 +156,7 @@ static bool gt911_read_point(uint16_t * x, uint16_t * y)
   uint8_t zero = 0;
   gt911_write_reg(gt911_addr, 0x814E, &zero, 1);
 
-  return true;
+  return Gt911ReadResult::UPDATED;
 }
 
 static void touch_task(void * param)
@@ -161,29 +171,111 @@ static void touch_task(void * param)
   constexpr uint16_t swipe_threshold          = 100; // pixels in GT911 space
   constexpr uint16_t longpress_move_threshold =  30; // max motion during hold
   constexpr uint32_t longpress_ms             = 600; // press duration
+  constexpr TickType_t edge_repeat_ticks      = pdMS_TO_TICKS(500);
 
   bool       touch_active = false;
   bool       hold_sent    = false;
+  bool       edge_repeat_sent    = false;
+  EventMgr::EventKind edge_repeat_kind = EventMgr::EventKind::NONE;
   uint16_t   start_x      = 0;
   uint16_t   start_y      = 0;
   uint16_t   current_x    = 0;
   uint16_t   current_y    = 0;
   TickType_t start_tick   = 0;
+  TickType_t last_repeat_tick = 0;
 
   while (true) {
     uint16_t x = 0;
     uint16_t y = 0;
 
-    bool has_touch = gt911_read_point(&x, &y);
+    const Gt911ReadResult res = gt911_read_point(&x, &y);
+    if (res == Gt911ReadResult::ERROR) {
+      vTaskDelay(pdMS_TO_TICKS(20));
+      continue;
+    }
+
+    auto maybe_send_hold_or_edge_repeat = [&]() {
+      if (!touch_active) return;
+      TickType_t now = xTaskGetTickCount();
+
+      int dx = (int)current_x - (int)start_x;
+      int dy = (int)current_y - (int)start_y;
+      if (dx < 0) dx = -dx;
+      if (dy < 0) dy = -dy;
+
+      if ((dx > (int)longpress_move_threshold) || (dy > (int)longpress_move_threshold)) return;
+
+      if ((edge_repeat_kind != EventMgr::EventKind::NONE) &&
+          ((now - start_tick) >= edge_repeat_ticks) &&
+          ((now - last_repeat_tick) >= edge_repeat_ticks)) {
+        EventMgr::Event ev;
+        ev.kind = edge_repeat_kind;
+        ev.x    = start_x;
+        ev.y    = start_y;
+        ev.dist = 0;
+
+        if (input_event_queue != nullptr) {
+          xQueueSend(input_event_queue, &ev, 0);
+        }
+
+        ESP_LOGI(TAG, "Touch EDGE_REPEAT kind=%s x=%u y=%u",
+                 (ev.kind == EventMgr::EventKind::SWIPE_RIGHT) ? "SWIPE_RIGHT" : "SWIPE_LEFT",
+                 (unsigned)ev.x, (unsigned)ev.y);
+
+        last_repeat_tick = now;
+        edge_repeat_sent = true;
+        return;
+      }
+
+      // Default: detect a long press while the finger is still down.
+      if (hold_sent || edge_repeat_kind != EventMgr::EventKind::NONE) return;
+      const uint32_t dt_ms = (now - start_tick) * portTICK_PERIOD_MS;
+      if (dt_ms >= longpress_ms) {
+        EventMgr::Event ev;
+        ev.kind = EventMgr::EventKind::HOLD;
+        ev.x    = start_x;
+        ev.y    = start_y;
+        ev.dist = 0;
+
+        if (input_event_queue != nullptr) {
+          xQueueSend(input_event_queue, &ev, 0);
+        }
+
+        ESP_LOGI(TAG, "Touch HOLD x=%u y=%u", (unsigned)ev.x, (unsigned)ev.y);
+
+        hold_sent = true;
+      }
+    };
+
+    // IMPORTANT: Don't interpret NO_UPDATE as \"no touch\". That would cause
+    // false release/press transitions and can register as double taps.
+    if (res == Gt911ReadResult::NO_UPDATE) {
+      maybe_send_hold_or_edge_repeat();
+      vTaskDelay(pdMS_TO_TICKS(20));
+      continue;
+    }
+
+    const bool has_touch = (res == Gt911ReadResult::UPDATED);
 
     if (has_touch) {
       if (!touch_active) {
         // First contact
         touch_active = true;
         hold_sent    = false;
+        edge_repeat_sent    = false;
+        edge_repeat_kind    = EventMgr::EventKind::NONE;
         start_tick   = xTaskGetTickCount();
+        last_repeat_tick = start_tick;
         start_x      = current_x = x;
         start_y      = current_y = y;
+
+        const uint16_t w = Screen::get_width();
+        if (start_x < (w / 3)) {
+          edge_repeat_kind    = EventMgr::EventKind::SWIPE_RIGHT;
+        }
+        else if (start_x > ((w / 3) * 2)) {
+          edge_repeat_kind    = EventMgr::EventKind::SWIPE_LEFT;
+        }
       }
       else {
         // Update current finger position while it moves.
@@ -191,35 +283,7 @@ static void touch_task(void * param)
         current_y = y;
       }
 
-      // Detect a long press while the finger is still down.
-      if (touch_active && !hold_sent) {
-        TickType_t now   = xTaskGetTickCount();
-        uint32_t   dt_ms = (now - start_tick) * portTICK_PERIOD_MS;
-
-        int dx = (int)current_x - (int)start_x;
-        int dy = (int)current_y - (int)start_y;
-        if (dx < 0) dx = -dx;
-        if (dy < 0) dy = -dy;
-
-        if ((dt_ms >= longpress_ms) &&
-            (dx <= (int)longpress_move_threshold) &&
-            (dy <= (int)longpress_move_threshold)) {
-
-          EventMgr::Event ev;
-          ev.kind = EventMgr::EventKind::HOLD;
-          ev.x    = start_x;
-          ev.y    = start_y;
-          ev.dist = 0;
-
-          if (input_event_queue != nullptr) {
-            xQueueSend(input_event_queue, &ev, 0);
-          }
-
-          ESP_LOGI(TAG, "Touch HOLD x=%u y=%u", (unsigned)ev.x, (unsigned)ev.y);
-
-          hold_sent = true;
-        }
-      }
+      maybe_send_hold_or_edge_repeat();
     }
     else {
       if (touch_active) {
@@ -242,7 +306,12 @@ static void touch_task(void * param)
 
         (void)dt_ms; // dt_ms currently unused but kept for potential tuning.
 
-        if (hold_sent) {
+        if (edge_repeat_sent) {
+          // End of an edge-repeat sequence.
+          ev.kind = EventMgr::EventKind::RELEASE;
+          ESP_LOGI(TAG, "Touch RELEASE (edge-repeat) x=%u y=%u", (unsigned)ev.x, (unsigned)ev.y);
+        }
+        else if (hold_sent) {
           // End of a long-press sequence.
           ev.kind = EventMgr::EventKind::RELEASE;
           ESP_LOGI(TAG, "Touch RELEASE x=%u y=%u", (unsigned)ev.x, (unsigned)ev.y);
